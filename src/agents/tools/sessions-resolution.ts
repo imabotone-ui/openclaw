@@ -237,12 +237,14 @@ async function requestResolvedSession(
 function buildSessionResolveQuery(params: {
   input: string;
   kind: "key" | "sessionId";
+  agentId?: string;
   requesterInternalKey?: string;
   restrictToSpawned: boolean;
   allowMissing?: boolean;
 }): Record<string, unknown> & { allowMissing?: boolean } {
   return {
     [params.kind]: params.input,
+    agentId: params.agentId,
     spawnedBy: params.restrictToSpawned ? params.requesterInternalKey : undefined,
     ...(params.kind === "sessionId"
       ? {
@@ -256,6 +258,7 @@ function buildSessionResolveQuery(params: {
 
 export async function resolveSessionReference(params: {
   sessionKey: string;
+  agentId?: string;
   alias: string;
   mainKey: string;
   requesterInternalKey?: string;
@@ -279,6 +282,7 @@ export async function resolveSessionReference(params: {
         buildSessionResolveQuery({
           input,
           kind,
+          agentId: params.agentId,
           requesterInternalKey: params.requesterInternalKey,
           restrictToSpawned: params.restrictToSpawned,
           allowMissing,
@@ -315,6 +319,7 @@ export async function resolveSessionReference(params: {
         buildSessionResolveQuery({
           input: raw,
           kind: "sessionId",
+          agentId: params.agentId,
           requesterInternalKey: params.requesterInternalKey,
           restrictToSpawned: params.restrictToSpawned,
         }),

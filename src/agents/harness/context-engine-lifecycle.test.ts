@@ -108,7 +108,8 @@ describe("harness context engine lifecycle", () => {
       const result = await assembleHarnessContextEngine({
         contextEngine: createContextEngine({ assemble }),
         sessionId: sessionParams.sessionId,
-        sessionKey: "agent:support:main",
+        sessionKey: "global",
+        agentId: "support",
         messages: [textMessage("user", "visible ask", 1)],
         availableTools,
         citationsMode: "on",
@@ -122,7 +123,7 @@ describe("harness context engine lifecycle", () => {
       expect(prepare).toHaveBeenCalledWith(
         expect.objectContaining({
           agentId: "support",
-          agentSessionKey: "agent:support:main",
+          agentSessionKey: "global",
           sandboxed: true,
         }),
       );

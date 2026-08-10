@@ -3,6 +3,7 @@
  */
 import { setReplyPayloadMetadata, type ReplyPayload } from "../auto-reply/reply-payload.js";
 import { SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
+import { resolvePersistedSessionStoreOwnerForTarget } from "../config/sessions/session-store-owner.js";
 import { resolveSessionStorePathCore } from "../config/sessions/paths.js";
 import { patchSessionEntryCore } from "../config/sessions/session-accessor.js";
 import { appendExactAssistantMessageToSessionTranscript } from "../config/sessions/transcript.js";
@@ -26,7 +27,8 @@ import {
 } from "../plugins/hook-agent-context.js";
 import { resolveBlockMessage } from "../plugins/hook-decision-types.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
-import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
+import { parseAgentSessionKey } from "../routing/session-key.js";
+import { resolveSessionAgentId } from "./agent-scope.js";
 import {
   externalCliDiscoveryForProviderAuth,
   loadAuthProfileStoreForRuntime,
@@ -1080,7 +1082,27 @@ export async function runPreparedCliAgent(
 
     try {
       const sessionKey = params.sessionKey?.trim() || params.sessionId;
-      const agentId = params.agentId ?? resolveAgentIdFromSessionKey(sessionKey);
+      const targetAgentId = params.sessionTarget?.agentId;
+      const targetStorePath = params.sessionTarget?.storePath;
+      const targetStoreOwner = resolvePersistedSessionStoreOwnerForTarget({
+        config: params.config ?? {},
+        sessionKey,
+        storePath: targetStorePath,
+      });
+      const explicitAlternateStoreAgentId =
+        targetAgentId &&
+        targetStorePath &&
+        !parseAgentSessionKey(sessionKey)?.agentId &&
+        targetStoreOwner.kind === "none"
+          ? targetAgentId
+          : undefined;
+      const agentId =
+        explicitAlternateStoreAgentId ??
+        resolveSessionAgentId({
+          agentId: targetAgentId ?? params.agentId,
+          config: params.config,
+          sessionKey,
+        });
       let sessionManager = params.sessionManager;
       if (!sessionManager) {
         const sessionTarget = params.sessionTarget ?? {

@@ -6,12 +6,14 @@
 import { asPositiveSafeInteger } from "@openclaw/normalization-core/number-coercion";
 import { Type } from "typebox";
 import { getRuntimeConfig } from "../../config/config.js";
+import { resolvePersistedSessionStoreOwnerForKey } from "../../config/sessions/session-store-owner.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { capArrayByJsonBytes } from "../../gateway/session-transcript-readers.js";
 import { jsonUtf8Bytes } from "../../infra/json-utf8-bytes.js";
 import { redactToolPayloadText } from "../../logging/redact.js";
+import { parseAgentSessionKey } from "../../routing/session-key.js";
 import { truncateUtf16Safe } from "../../utils.js";
-import { resolveDefaultAgentId } from "../agent-scope-config.js";
+import { resolveSessionAgentIds } from "../agent-scope.js";
 import { optionalPositiveIntegerSchema } from "../schema/typebox.js";
 import {
   describeSessionsHistoryTool,
@@ -30,7 +32,10 @@ import {
   callAgentToolGatewayRequest,
   type AgentToolGatewayRequestCaller,
 } from "./in-process-gateway.js";
-import { runWithScopedSessionAccess } from "./scoped-session-access.js";
+import {
+  resolveSessionToolTargetAgentId,
+  runWithScopedSessionAccess,
+} from "./scoped-session-access.js";
 import {
   createSessionVisibilityGuard,
   createAgentToAgentPolicy,
@@ -38,6 +43,7 @@ import {
   resolveSessionReference,
   resolveSandboxedSessionToolContext,
   resolveVisibleSessionReference,
+  shouldResolveSessionIdInput,
 } from "./sessions-helpers.js";
 
 const SessionsHistoryToolSchema = Type.Object({
@@ -352,6 +358,7 @@ function resolveSessionsHistoryPaginationMetadata(params: {
 
 export function createSessionsHistoryTool(opts?: {
   agentSessionKey?: string;
+  requesterAgentIdOverride?: string;
   sandboxed?: boolean;
   config?: OpenClawConfig;
   callGateway?: GatewayCaller;
@@ -387,8 +394,24 @@ export function createSessionsHistoryTool(opts?: {
           agentSessionKey: opts?.agentSessionKey,
           sandboxed: opts?.sandboxed,
         });
+      const requesterAgentId = resolveSessionAgentIds({
+        config: cfg,
+        sessionKey: effectiveRequesterKey,
+        agentId: opts?.requesterAgentIdOverride,
+      }).sessionAgentId;
+      const normalizedInputKey = sessionKeyParam.trim();
+      const isConfiguredMainAlias =
+        normalizedInputKey === "main" ||
+        normalizedInputKey === "global" ||
+        normalizedInputKey === mainKey ||
+        normalizedInputKey === alias;
+      const inputStoreOwner =
+        shouldResolveSessionIdInput(sessionKeyParam) && !isConfiguredMainAlias
+          ? { kind: "none" as const }
+          : resolvePersistedSessionStoreOwnerForKey(cfg, sessionKeyParam);
       const resolvedSession = await resolveSessionReference({
         sessionKey: sessionKeyParam,
+        ...(inputStoreOwner.kind === "configured" ? { agentId: inputStoreOwner.agentId } : {}),
         alias,
         mainKey,
         requesterInternalKey: effectiveRequesterKey,
@@ -415,6 +438,12 @@ export function createSessionsHistoryTool(opts?: {
       // From here on, use the canonical key (sessionId inputs already resolved).
       const resolvedKey = visibleSession.key;
       const displayKey = visibleSession.displayKey;
+      const targetAgentId = resolveSessionToolTargetAgentId({
+        cfg,
+        targetSessionKey: resolvedKey,
+        resolvedAgentId: visibleSession.agentId,
+        requesterAgentId,
+      });
 
       const a2aPolicy = createAgentToAgentPolicy(cfg);
       const visibility = resolveEffectiveSessionToolsVisibility({
@@ -423,13 +452,18 @@ export function createSessionsHistoryTool(opts?: {
       });
       const visibilityGuard = await createSessionVisibilityGuard({
         action: "history",
-        defaultAgentId: resolveDefaultAgentId(cfg),
+        defaultAgentId: requesterAgentId,
+        requesterAgentId,
         requesterSessionKey: effectiveRequesterKey,
         visibility,
         a2aPolicy,
         callGateway: gatewayCall,
       });
-      const access = visibilityGuard.check(resolvedKey);
+      const authorizationKey =
+        targetAgentId !== requesterAgentId && !parseAgentSessionKey(resolvedKey)
+          ? `agent:${targetAgentId}:${resolvedKey}`
+          : resolvedKey;
+      const access = visibilityGuard.check(authorizationKey);
       if (!access.allowed) {
         return jsonResult({
           status: access.status,
@@ -439,6 +473,7 @@ export function createSessionsHistoryTool(opts?: {
 
       const result = await runWithScopedSessionAccess({
         cfg,
+        agentId: targetAgentId,
         expectedSessionId: access.expectedSessionId,
         targetSessionKey: resolvedKey,
         run: async () =>
@@ -452,6 +487,7 @@ export function createSessionsHistoryTool(opts?: {
             method: "chat.history",
             params: {
               sessionKey: resolvedKey,
+              agentId: targetAgentId,
               limit,
               ...(offset !== undefined ? { offset } : {}),
               ...(messageId ? { messageId } : {}),
