@@ -22,7 +22,11 @@ import {
   readGatewayDispatchConfig,
   readGatewayDispatchConfigWithShellEnvFallback,
 } from "../config/gateway-dispatch-config.js";
-import { tryResolveLegacyCompatibilityAgentId } from "../config/legacy.default-agent-owner.js";
+import {
+  inheritLegacyDefaultAgentId,
+  tryGetLegacyDefaultAgentId,
+  tryResolveLegacyCompatibilityAgentId,
+} from "../config/legacy.default-agent-owner.js";
 import { migratePersistedImplicitMainRoster } from "../config/legacy.roster.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
@@ -143,9 +147,15 @@ function usesImplicitRemoteCompatibilityDefault(roster: RemoteGatewayRoster): bo
 }
 
 function resolveImplicitCliAgentId(cfg: OpenClawConfig, remote?: RemoteGatewayRoster): string {
-  const selectionCfg = remote
+  const migratedConfig = remote
     ? cfg
     : (migratePersistedImplicitMainRoster(cfg).config as OpenClawConfig);
+  const selectionCfg = remote
+    ? cfg
+    : inheritLegacyDefaultAgentId(
+        tryGetLegacyDefaultAgentId(cfg) ? cfg : migratedConfig,
+        migratedConfig,
+      );
   const selected = remote
     ? remote.selectionRequired
       ? undefined
@@ -594,7 +604,7 @@ async function normalizeSessionKeyOptsForDispatch(
     const unscopedSession = isUnscopedSessionKeySentinel(rawSessionKey) || implicitGlobalSession;
     const implicitAgentSelection = implicitSoleAgent || implicitCompatibilityDefault;
     agentIdRaw = implicitAgentSelection && unscopedSession ? undefined : selectedAgentId;
-    if (!remoteGatewayRoster && opts.local !== true && implicitCompatibilityDefault) {
+    if (!remoteGatewayRoster && implicitCompatibilityDefault) {
       // The retained owner lives on the migrated config sidecar, so carry it past
       // normalization rather than re-deriving ownership from the raw dispatch config.
       normalizedOpts = {
@@ -1185,7 +1195,8 @@ export async function agentCliCommand(
         result = await runEmbeddedAgentCommand(
           {
             ...gatewayDispatchOpts,
-            agentId: gatewayDispatchOpts.agent,
+            agentId:
+              gatewayDispatchOpts.agent ?? gatewayDispatchOpts.localGatewayCompatibilityAgentId,
             replyAccountId: gatewayDispatchOpts.replyAccount,
             cleanupBundleMcpOnRunEnd: true,
             cleanupCliLiveSessionOnRunEnd: true,
