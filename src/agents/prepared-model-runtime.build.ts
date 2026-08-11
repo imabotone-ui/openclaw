@@ -5,6 +5,10 @@ import { runTasksWithConcurrency } from "../utils/run-with-concurrency.js";
 import { resolveUsableAgentCredentialModes } from "./agent-auth-credentials.js";
 import { getPreparedRuntimeAuthMaterializations } from "./auth-profiles/runtime-materializations.js";
 import type { ModelCatalogSnapshot } from "./model-catalog.types.js";
+import {
+  createPreparedModelCatalogWorkerInput,
+  runPreparedModelCatalogWorker,
+} from "./prepared-model-catalog-worker.js";
 import { setPreparedModelRuntimeAuthMaterializations } from "./prepared-model-runtime-auth.js";
 import {
   PreparedModelRuntimePublicationSupersededError,
@@ -133,24 +137,16 @@ function createFullModelCatalogAccess(params: {
               // Full inventory belongs to explicit control-plane reads. The generation queue
               // prevents a stale plan from overlapping or following a replacement build.
               assertCurrent();
-              // Agent facts remain bound to the published turn generation. Auth mutations advance
-              // that owner generation, while plugin facts remain bound to this exact generation.
-              const fullCatalogMode: PreparedModelRuntimeCatalogMode = "live";
-              const catalogSource = await prepareAgentCatalogSource(
-                params.agentFacts,
-                params.pluginGeneration,
-                fullCatalogMode,
-                false,
-              );
+              const workerInput = createPreparedModelCatalogWorkerInput({
+                agentFacts: params.agentFacts,
+                pluginMetadataSnapshot: params.pluginGeneration.pluginMetadataSnapshot,
+              });
+              const catalog = await runPreparedModelCatalogWorker({
+                input: workerInput,
+                isCurrent: params.isCurrent,
+              });
               assertCurrent();
-              const facts = await prepareFullCatalogFacts(
-                params.agentFacts,
-                params.pluginGeneration,
-                fullCatalogMode,
-                catalogSource,
-              );
-              assertCurrent();
-              fullCatalog = facts.modelCatalog;
+              fullCatalog = catalog;
               return fullCatalog;
             }),
         }).finally(() => {

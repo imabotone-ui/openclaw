@@ -48,6 +48,10 @@ const preparedModelRuntimeMocks = vi.hoisted(() => ({
     pluginCatalogs: [],
   })),
   prepareStaticCatalog: vi.fn(async (..._args: unknown[]) => ({ entries: [] })),
+  runPreparedModelCatalogWorker: vi.fn(async (..._args: unknown[]) => ({
+    entries: [],
+    routeVariants: [],
+  })),
   resolveAmbientCredentials: vi.fn((..._args: unknown[]) => ({})),
   resolveStaticCatalogModel: vi.fn<StaticCatalogResolver>(() => undefined),
   warn: vi.fn(),
@@ -60,6 +64,25 @@ const preparedModelRuntimeMocks = vi.hoisted(() => ({
   materializationListeners: new Set<
     (event: { agentDir?: string; affectsInheritedStores: boolean }) => void
   >(),
+}));
+
+vi.mock("./prepared-model-catalog-worker.js", () => ({
+  createPreparedModelCatalogWorkerInput: ({
+    agentFacts,
+  }: {
+    agentFacts: {
+      input: unknown;
+      credentials: unknown;
+      providerIds: unknown;
+    };
+  }) => ({
+    generationFingerprint: "test-generation",
+    input: agentFacts.input,
+    credentials: agentFacts.credentials,
+    providerIds: agentFacts.providerIds,
+  }),
+  runPreparedModelCatalogWorker: (...args: unknown[]) =>
+    preparedModelRuntimeMocks.runPreparedModelCatalogWorker(...args),
 }));
 
 vi.mock("./model-catalog.js", () => ({
@@ -280,6 +303,10 @@ export function resetPreparedModelRuntimeHarness(): void {
       pluginCatalogs: [],
     }));
   preparedModelRuntimeMocks.prepareStaticCatalog.mockReset().mockResolvedValue({ entries: [] });
+  preparedModelRuntimeMocks.runPreparedModelCatalogWorker.mockReset().mockResolvedValue({
+    entries: [],
+    routeVariants: [],
+  });
   preparedModelRuntimeMocks.resolveAmbientCredentials.mockReset().mockReturnValue({});
   preparedModelRuntimeMocks.resolveStaticCatalogModel.mockReset().mockReturnValue(undefined);
   preparedModelRuntimeMocks.createStaticCatalogResolver

@@ -60,6 +60,10 @@ const mocks = vi.hoisted(() => {
     buildPreparedModelCatalogSnapshot: vi.fn(async () => ({ entries: [], routeVariants: [] })),
     loadAgentRuntimePluginRegistryHandle: vi.fn(),
     loadStaticCatalog: vi.fn(async () => []),
+    runPreparedModelCatalogWorker: vi.fn(async () => ({
+      entries: [],
+      routeVariants: [],
+    })),
     prepareStaticCatalog: vi.fn(async (..._args: unknown[]) => ({
       providers: [
         {
@@ -99,6 +103,21 @@ const mocks = vi.hoisted(() => {
       | undefined,
   };
 });
+
+vi.mock("./prepared-model-catalog-worker.js", () => ({
+  createPreparedModelCatalogWorkerInput: ({
+    agentFacts,
+  }: {
+    agentFacts: { input: unknown; credentials: unknown; providerIds: unknown };
+  }) => ({
+    generationFingerprint: "test-generation",
+    input: agentFacts.input,
+    credentials: agentFacts.credentials,
+    providerIds: agentFacts.providerIds,
+  }),
+  runPreparedModelCatalogWorker: (...args: unknown[]) =>
+    mocks.runPreparedModelCatalogWorker(...args),
+}));
 
 vi.mock("../plugins/plugin-metadata-snapshot.js", () => ({
   isPluginMetadataSnapshotCompatible: () => true,
@@ -182,6 +201,10 @@ beforeEach(() => {
   mocks.loadAgentRuntimePluginRegistryHandle
     .mockReset()
     .mockReturnValue(createEmptyPluginRegistry());
+  mocks.runPreparedModelCatalogWorker.mockReset().mockResolvedValue({
+    entries: [],
+    routeVariants: [],
+  });
   vi.clearAllMocks();
   mocks.resolveStaticCatalogModel.mockReturnValue(undefined);
 });
@@ -376,37 +399,21 @@ describe("prepared model runtime Gateway catalog mode", () => {
     expect(snapshot?.mediaCapabilityProviders).toBeDefined();
     const fullCatalog = await snapshot?.loadFullModelCatalog?.();
     expect(mocks.ensureOpenClawModelsJson).not.toHaveBeenCalled();
-    expect(mocks.planOpenClawModelsJsonSource).toHaveBeenCalledWith(
-      config,
-      "/tmp/prepared-static-agent",
-      expect.objectContaining({
-        pluginMetadataSnapshot: mocks.metadataSnapshot,
-        providerDiscoveryTimeoutMs: 5_000,
-      }),
-    );
-    const fullCatalogOptions = mocks.planOpenClawModelsJsonSource.mock.calls[0]?.[2];
-    expect(fullCatalogOptions).not.toHaveProperty("providerDiscoveryProviderIds");
-    expect(mocks.buildPreparedModelCatalogSnapshot).toHaveBeenCalledWith(
-      expect.objectContaining({ includeProviderPluginAugmentation: true }),
-    );
+    expect(mocks.runPreparedModelCatalogWorker).toHaveBeenCalledOnce();
+    expect(mocks.planOpenClawModelsJsonSource).not.toHaveBeenCalled();
+    expect(mocks.buildPreparedModelCatalogSnapshot).not.toHaveBeenCalled();
     expect(mocks.loadAgentRuntimePluginRegistryHandle).toHaveBeenCalledOnce();
-    expect(mocks.loadAgentRuntimePluginRegistryHandle.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.buildPreparedModelCatalogSnapshot.mock.invocationCallOrder[0]!,
-    );
-    expect(mocks.loadStaticCatalog).toHaveBeenCalledWith(
-      expect.objectContaining({ metadataSnapshot: mocks.metadataSnapshot }),
-    );
+    expect(mocks.loadStaticCatalog).not.toHaveBeenCalled();
 
     mocks.mutationListener?.({
       agentDir: "/tmp/prepared-static-agent",
       affectsInheritedStores: false,
     });
     await expect(snapshot?.loadFullModelCatalog?.()).resolves.toBe(fullCatalog);
-    await vi.waitFor(() => expect(mocks.discoverModels).toHaveBeenCalledTimes(3));
     expect(mocks.ensureOpenClawModelsJson).not.toHaveBeenCalled();
-    expect(mocks.planOpenClawModelsJsonSource).toHaveBeenCalledOnce();
+    expect(mocks.runPreparedModelCatalogWorker).toHaveBeenCalledOnce();
     expect(mocks.prepareStaticCatalog).toHaveBeenCalledOnce();
-    expect(mocks.discoverModels).toHaveBeenCalledTimes(3);
+    expect(mocks.discoverModels).toHaveBeenCalledTimes(2);
   });
 
   it("publishes exact dynamic configured models without building a live catalog", async () => {

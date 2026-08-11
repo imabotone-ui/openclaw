@@ -486,6 +486,12 @@ export function isPreparedModelCatalogFull(snapshot: ModelCatalogSnapshot): bool
   return fullModelCatalogSnapshots.has(snapshot);
 }
 
+/** Restores the process-local provenance of a full catalog returned across a worker boundary. */
+export function markPreparedModelCatalogFull(snapshot: ModelCatalogSnapshot): ModelCatalogSnapshot {
+  fullModelCatalogSnapshots.add(snapshot);
+  return snapshot;
+}
+
 function captureModelsJsonContents(agentDir: string): string | null {
   try {
     return fs.readFileSync(path.join(agentDir, "models.json"), "utf8");
