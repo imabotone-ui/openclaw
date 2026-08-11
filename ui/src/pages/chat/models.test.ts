@@ -82,6 +82,28 @@ describe("loadModels", () => {
     expect(await loadModels(client)).toEqual(fresh);
     expect(request).toHaveBeenCalledTimes(2);
   });
+
+  it("coalesces concurrent refreshes without reusing a completed refresh", async () => {
+    let releaseRefresh: (() => void) | undefined;
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    const request = vi.fn(async () => {
+      await refreshGate;
+      return { models: [{ id: "fresh", name: "Fresh", provider: "openai" }] };
+    });
+    const client = { request } as unknown as GatewayBrowserClient;
+
+    const first = loadModels(client, { agentId: "writer", refresh: true });
+    const concurrent = loadModels(client, { agentId: "writer", refresh: true });
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+    releaseRefresh?.();
+    expect(await concurrent).toBe(await first);
+
+    await loadModels(client, { agentId: "writer", refresh: true });
+
+    expect(request).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("applyModelCatalogResult", () => {

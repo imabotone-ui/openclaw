@@ -25,7 +25,6 @@ export const MODEL_PROVIDERS_COST_DAYS = 30;
 export type ModelProvidersData = {
   authStatus: ModelAuthStatusResult | null;
   models: ModelCatalogEntry[] | null;
-  catalogModels: ModelCatalogEntry[] | null;
   providerOutcomes: ModelCatalogProviderOutcome[];
   config: Record<string, unknown> | null;
   providerUsage: UsageSummary | null;
@@ -35,14 +34,12 @@ export type ModelProvidersData = {
 };
 
 type ModelProvidersCatalogResult = {
-  models: ModelCatalogEntry[];
   providerOutcomes?: ModelCatalogProviderOutcome[];
 };
 
 export const EMPTY_MODEL_PROVIDERS_DATA: ModelProvidersData = {
   authStatus: null,
   models: null,
-  catalogModels: null,
   providerOutcomes: [],
   config: null,
   providerUsage: null,
@@ -84,12 +81,13 @@ export async function loadModelProvidersData(
         (error: unknown) => ({ ok: false as const, error }),
       ),
       loadModels(client, opts).catch(() => null),
-      request<ModelProvidersCatalogResult>("models.list", {
-        view: "all",
-        includeProviderCapabilities: true,
-      })
-        .then((result) => result ?? null)
-        .catch(() => null),
+      opts?.refresh
+        ? request<ModelProvidersCatalogResult>("models.list", {
+            view: "all",
+          })
+            .then((result) => result ?? null)
+            .catch(() => null)
+        : Promise.resolve(null),
       request<ConfigSnapshot>("config.get", {})
         .then((snapshot) => resolveEditableSnapshotConfig(snapshot))
         .catch(() => null),
@@ -107,7 +105,6 @@ export async function loadModelProvidersData(
     authStatus:
       authStatus.ok && Array.isArray(authStatus.result?.providers) ? authStatus.result : null,
     models,
-    catalogModels: catalogResult?.models ?? null,
     providerOutcomes: catalogResult?.providerOutcomes ?? [],
     config,
     providerUsage,

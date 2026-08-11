@@ -638,8 +638,9 @@ export class ModelProvidersPage extends OpenClawLightDomElement {
       defaultModelsDirty: this.defaultsDraft !== null,
       ...modelBehavior,
       configBusy,
+      quickAddSupported: data.authStatus?.providerCapabilities !== undefined,
       unconfiguredProviders: buildUnconfiguredProviderOptions(
-        data.catalogModels,
+        data.authStatus?.providerCapabilities,
         configuredProviderIds,
       ),
       canMutate: this.canMutate(),

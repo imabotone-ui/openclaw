@@ -3,6 +3,36 @@ import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import { loadModelProvidersData } from "./load.ts";
 
 describe("loadModelProvidersData", () => {
+  it("keeps full catalog discovery out of the initial page load", async () => {
+    const request = vi.fn(async (method: string) => {
+      switch (method) {
+        case "models.authStatus":
+          return { ts: 1, providers: [], providerCapabilities: [] };
+        case "models.list":
+          return { models: [] };
+        case "config.get":
+          return { config: {}, hash: "hash" };
+        case "usage.status":
+          return { updatedAt: 1, providers: [] };
+        case "sessions.usage":
+          return { aggregates: { byProvider: [] } };
+        default:
+          return {};
+      }
+    });
+    const client = { request } as unknown as GatewayBrowserClient;
+
+    const result = await loadModelProvidersData(client);
+
+    expect(
+      request.mock.calls.filter(
+        ([method, params]) =>
+          method === "models.list" && (params as { view?: string } | undefined)?.view === "all",
+      ),
+    ).toHaveLength(0);
+    expect(result.providerOutcomes).toEqual([]);
+  });
+
   it("scopes only credential status to the selected agent", async () => {
     const request = vi.fn(async (method: string, _params?: unknown) => {
       switch (method) {
@@ -29,6 +59,7 @@ describe("loadModelProvidersData", () => {
       agentId: "writer",
     });
     expect(request).toHaveBeenCalledWith("usage.status");
+    expect(request).toHaveBeenCalledWith("models.list", { view: "all" });
     const sessionUsageCall = request.mock.calls.find(([method]) => method === "sessions.usage");
     expect(sessionUsageCall?.[1]).not.toHaveProperty("agentId");
     expect(sessionUsageCall?.[1]).toHaveProperty("agentScope", "all");
@@ -57,7 +88,6 @@ describe("loadModelProvidersData", () => {
 
     expect(result.authStatus).toBeNull();
     expect(result.models).toEqual([]);
-    expect(result.catalogModels).toEqual([]);
     expect(result.config).toEqual({});
     expect(result.providerUsage).toEqual({ updatedAt: 1, providers: [] });
     expect(result.costByProvider).toEqual([]);

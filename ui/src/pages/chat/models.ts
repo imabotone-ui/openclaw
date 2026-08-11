@@ -8,6 +8,7 @@ type ModelCatalogCacheEntry = {
   expiresAt: number;
   models: ModelCatalogEntry[];
   inFlight?: Promise<ModelCatalogEntry[]>;
+  inFlightRefresh?: boolean;
 };
 
 const modelCatalogCache = new WeakMap<GatewayBrowserClient, Map<string, ModelCatalogCacheEntry>>();
@@ -32,7 +33,7 @@ export async function loadModels(
   if (!opts?.refresh && cached?.models && cached.expiresAt > now) {
     return cached.models;
   }
-  if (!opts?.refresh && cached?.inFlight) {
+  if (cached?.inFlight && (!opts?.refresh || cached.inFlightRefresh === true)) {
     return cached.inFlight;
   }
 
@@ -64,6 +65,7 @@ export async function loadModels(
     expiresAt: cached?.expiresAt ?? 0,
     models: cached?.models ?? [],
     inFlight,
+    ...(opts?.refresh ? { inFlightRefresh: true } : {}),
   });
   return inFlight;
 }

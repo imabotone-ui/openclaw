@@ -118,6 +118,7 @@ import {
 
 function createOptions(
   params: Record<string, unknown> = {},
+  contextOverrides: Record<string, unknown> = {},
 ): GatewayRequestHandlerOptions & { respond: ReturnType<typeof vi.fn> } {
   const respond = vi.fn();
   return {
@@ -126,7 +127,7 @@ function createOptions(
     client: null,
     isWebchatConnect: () => false,
     respond,
-    context: { getRuntimeConfig: mocks.getRuntimeConfig } as unknown,
+    context: { getRuntimeConfig: mocks.getRuntimeConfig, ...contextOverrides } as unknown,
   } as unknown as GatewayRequestHandlerOptions & { respond: ReturnType<typeof vi.fn> };
 }
 
@@ -222,6 +223,17 @@ async function firstAuthStatusProvider() {
 
 async function readAuthStatus(params: Record<string, unknown> = {}) {
   const opts = createOptions(params);
+  await handler(opts);
+  const [ok, payload, error] = firstRespondCall(opts) ?? [];
+  expect(ok, JSON.stringify(error)).toBe(true);
+  return payload as ModelAuthStatusResult;
+}
+
+async function readAuthStatusWithContext(
+  params: Record<string, unknown>,
+  contextOverrides: Record<string, unknown>,
+) {
+  const opts = createOptions(params, contextOverrides);
   await handler(opts);
   const [ok, payload, error] = firstRespondCall(opts) ?? [];
   expect(ok, JSON.stringify(error)).toBe(true);
@@ -499,6 +511,60 @@ describe("models.authStatus", () => {
       ).type,
     ).toBe("oauth");
     expect(result.providers[0]?.profiles[0]?.logoutSupported).toBe(true);
+  });
+
+  it("projects provider capabilities from the published lifecycle metadata", async () => {
+    const plugins = [
+      {
+        id: "provider-auth",
+        origin: "bundled",
+        providerAuthAliases: { "openai-legacy": "openai" },
+        providerAuthChoices: [
+          {
+            provider: "openai-legacy",
+            method: "api-key",
+            choiceId: "openai-api-key",
+            choiceLabel: "OpenAI API key",
+            appGuidedSecret: true,
+          },
+          {
+            provider: "openai",
+            method: "oauth",
+            choiceId: "openai-oauth",
+            choiceLabel: "OpenAI OAuth",
+          },
+          {
+            provider: "github-copilot",
+            method: "oauth",
+            choiceId: "github-copilot-oauth",
+            choiceLabel: "GitHub Copilot OAuth",
+          },
+        ],
+      },
+    ];
+    const readPreparedGatewayModelCatalogSnapshot = vi.fn(async () => ({
+      agentId: "main",
+      agentDir: "/tmp/agent",
+      workspaceDir: "/tmp/workspace",
+      config: {},
+      entries: [],
+      routeVariants: [],
+      metadataSnapshot: { manifestRegistry: { plugins }, plugins },
+    }));
+
+    const result = await readAuthStatusWithContext({}, { readPreparedGatewayModelCatalogSnapshot });
+
+    expect(readPreparedGatewayModelCatalogSnapshot).toHaveBeenCalledWith({ agentId: "main" });
+    expect(result.providerCapabilities).toEqual([
+      { provider: "github-copilot", apiKeySupported: false, quickApiKeySetup: false },
+      { provider: "openai", apiKeySupported: true, quickApiKeySetup: true },
+    ]);
+  });
+
+  it("omits provider capabilities when no lifecycle snapshot is published", async () => {
+    const result = await readAuthStatus();
+
+    expect(result.providerCapabilities).toBeUndefined();
   });
 
   it("does not offer logout for runtime external CLI profiles", async () => {

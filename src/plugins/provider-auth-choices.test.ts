@@ -132,6 +132,36 @@ describe("provider auth choice manifest helpers", () => {
     resetProviderAuthAliasMapCacheForTest();
   });
 
+  it("uses an injected lifecycle metadata snapshot without loading plugin metadata", () => {
+    const plugins = [
+      {
+        id: "snapshot-provider",
+        origin: "bundled",
+        providerAuthChoices: [
+          {
+            provider: "snapshot-provider",
+            method: "api-key",
+            choiceId: "snapshot-provider-api-key",
+            choiceLabel: "Snapshot Provider API key",
+          },
+        ],
+      },
+    ];
+
+    expect(
+      resolveManifestProviderAuthChoices({
+        metadataSnapshot: { manifestRegistry: { plugins }, plugins } as never,
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        providerId: "snapshot-provider",
+        methodId: "api-key",
+        choiceId: "snapshot-provider-api-key",
+      }),
+    ]);
+    expect(pluginRegistryMocks.loadPluginMetadataSnapshot).not.toHaveBeenCalled();
+  });
+
   it("flattens manifest auth choices", () => {
     setSingleManifestProviderAuthChoices("openai", [
       createProviderAuthChoice({

@@ -42,6 +42,7 @@ function props(overrides: Partial<ModelProvidersViewProps> = {}): ModelProviders
     fastMode: false,
     fastModeOverridden: true,
     configBusy: false,
+    quickAddSupported: true,
     unconfiguredProviders: [{ id: "anthropic", displayName: "Anthropic" }],
     canMutate: true,
     mutationBlockedReason: null,
@@ -126,6 +127,19 @@ describe("renderModelProviders", () => {
       render(nothing, container);
     }
     document.body.replaceChildren();
+  });
+
+  it("hides quick API-key setup when the gateway does not advertise capabilities", () => {
+    const container = mount(
+      props({
+        configuredModels: [],
+        quickAddSupported: false,
+        unconfiguredProviders: [],
+      }),
+    );
+
+    expect(text(container)).not.toContain("Add provider");
+    expect(container.querySelector('[data-model-readiness="model-required"]')).not.toBeNull();
   });
 
   it("renders model behavior next to default models and emits canonical values", () => {
