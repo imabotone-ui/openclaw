@@ -11,7 +11,7 @@ import {
   missingScopeErrorShape,
   validateSessionsCreateParams,
 } from "../../../packages/gateway-protocol/src/index.js";
-import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
+import { resolveAgentWorkspaceDir } from "../../agents/agent-scope.js";
 import { resolveDefaultModelForAgent } from "../../agents/model-selection.js";
 import { resolveSandboxRuntimeStatus } from "../../agents/sandbox/runtime-status.js";
 import { insideGitCheckout } from "../../agents/worktrees/git.js";
@@ -82,22 +82,20 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
       return;
     }
     const explicitlyRequestedKey = normalizeOptionalString(p.key);
-    const explicitlyRequestedAgent =
-      explicitlyRequestedKey && !parseAgentSessionKey(explicitlyRequestedKey)
-        ? resolveRequestedGlobalAgentId(cfg, explicitlyRequestedKey, p.agentId, {
-            allowUnconfiguredExplicitAgent: true,
-          })
-        : undefined;
-    if (explicitlyRequestedAgent && !explicitlyRequestedAgent.ok) {
+    const explicitlyRequestedAgent = resolveRequestedGlobalAgentId(
+      cfg,
+      explicitlyRequestedKey ?? "main",
+      p.agentId,
+      { allowUnconfiguredExplicitAgent: true },
+    );
+    if (!explicitlyRequestedAgent.ok) {
       respond(false, undefined, explicitlyRequestedAgent.error);
       return;
     }
     const catalogRequestedKey = normalizeOptionalString(p.key) ?? "global";
     const catalogAgentId = catalogId
       ? normalizeAgentId(
-          normalizeOptionalString(p.agentId) ??
-            parseAgentSessionKey(catalogRequestedKey)?.agentId ??
-            resolveDefaultAgentId(cfg),
+          parseAgentSessionKey(catalogRequestedKey)?.agentId ?? explicitlyRequestedAgent.agentId,
         )
       : undefined;
     const catalogTarget =
@@ -232,7 +230,7 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
     let sessionKey = p.key;
     let sessionAgentId =
       catalogAgentId ??
-      explicitlyRequestedAgent?.agentId ??
+      explicitlyRequestedAgent.agentId ??
       p.agentId ??
       parseAgentSessionKey(explicitlyRequestedKey)?.agentId;
     let sessionWorktree: Awaited<ReturnType<typeof managedWorktrees.create>> | undefined;
@@ -244,7 +242,7 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
       const targetAgentId = normalizeAgentId(
         sessionAgentId ??
           parseAgentSessionKey(sessionKey ?? "")?.agentId ??
-          resolveDefaultAgentId(cfg),
+          explicitlyRequestedAgent.agentId,
       );
       const targetSessionKey = sessionKey ?? `agent:${targetAgentId}:dashboard:pending`;
       const targetRuntime = resolveSandboxRuntimeStatus({
@@ -276,14 +274,12 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
     if (p.worktree === true) {
       // Workspace-contained cwd and registry-authorized projects stay at operator.write;
       // arbitrary host paths still require operator.admin before reaching this block.
-      const explicitKey = normalizeOptionalString(p.key);
-      const requestedKey = explicitKey ?? "global";
-      const requestedAgent = resolveRequestedGlobalAgentId(cfg, requestedKey, p.agentId);
-      if (!requestedAgent.ok) {
-        respond(false, undefined, requestedAgent.error);
-        return;
-      }
-      const agentId = normalizeAgentId(requestedAgent.agentId);
+      const explicitKey = explicitlyRequestedKey;
+      const agentId = normalizeAgentId(
+        explicitlyRequestedAgent.agentId ??
+          normalizeOptionalString(p.agentId) ??
+          parseAgentSessionKey(explicitKey)?.agentId,
+      );
       let targetKey = explicitKey;
       let preservesUnspecifiedKey = false;
       const parentSessionKey = normalizeOptionalString(p.parentSessionKey);
@@ -294,7 +290,7 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
         !hasInitialTurn &&
         cfg.session?.dmScope === "main"
       ) {
-        const parentRequestedAgent = resolveRequestedGlobalAgentId(cfg, parentSessionKey);
+        const parentRequestedAgent = resolveRequestedGlobalAgentId(cfg, parentSessionKey, agentId);
         if (!parentRequestedAgent.ok) {
           respond(false, undefined, parentRequestedAgent.error);
           return;
@@ -522,7 +518,7 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
     const modelCatalogAgentId = normalizeAgentId(
       sessionAgentId ??
         parseAgentSessionKey(sessionKey ?? "")?.agentId ??
-        resolveDefaultAgentId(cfg),
+        explicitlyRequestedAgent.agentId,
     );
     if (!authority.ensureActive()) {
       return;
@@ -599,7 +595,7 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
             req,
             params: {
               sessionKey: key,
-              ...(key === "global" ? { agentId } : {}),
+              agentId,
               message: initialMessage ?? "",
               idempotencyKey: randomUUID(),
               ...(initialAttachments ? { attachments: initialAttachments } : {}),
@@ -665,7 +661,7 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
       );
       emitSessionsChanged(context, {
         sessionKey: created.key,
-        ...(created.key === "global" ? { agentId: created.agentId } : {}),
+        agentId: created.agentId,
         reason: "new",
       });
       return;
@@ -696,13 +692,13 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
     );
     emitSessionsChanged(context, {
       sessionKey: created.key,
-      ...(created.key === "global" ? { agentId: created.agentId } : {}),
+      agentId: created.agentId,
       reason: "create",
     });
     if (runStarted) {
       emitSessionsChanged(context, {
         sessionKey: created.key,
-        ...(created.key === "global" ? { agentId: created.agentId } : {}),
+        agentId: created.agentId,
         reason: "send",
       });
     }

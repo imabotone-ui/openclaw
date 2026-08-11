@@ -510,6 +510,7 @@ export async function prepareEmbeddedAttemptHistory(input: {
       const activeSubagentPromptAddition = buildActiveSubagentSystemPromptAddition({
         cfg: attempt.config,
         controllerSessionKey: attempt.sessionKey,
+        controllerAgentId: input.sessionAgentId,
         hasSessionsYield: input.capabilityToolNames.has("sessions_yield"),
       });
       if (activeSubagentPromptAddition) {
