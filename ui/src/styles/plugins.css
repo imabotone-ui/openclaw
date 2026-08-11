@@ -638,7 +638,6 @@ h3.plugins-subheader {
   margin: var(--space-2) 0 0;
 }
 
-.plugins-policy-review__details-body p,
 .plugins-policy-review__details-body ul {
   margin: 0;
 }

@@ -419,6 +419,9 @@ function renderRowMessage(
           </span>
           <div>
             <strong>${t("pluginsPage.policyReviewTitle")}</strong>
+            ${findings.length > 0
+              ? html`<span class="plugins-policy-review__reason">${details.reason}</span>`
+              : nothing}
             <span>${reviewBody}</span>
           </div>
         </div>
@@ -456,7 +459,6 @@ function renderRowMessage(
                   <span>${t("pluginsPage.policyReviewTechnicalDetails")}</span>
                 </summary>
                 <div class="plugins-policy-review__details-body">
-                  <p>${details.reason}</p>
                   <ul>
                     ${findings.map(
                       (finding) => html`

@@ -716,6 +716,9 @@ describeControlUiE2e("Control UI Plugins mocked Gateway E2E", () => {
       const review = row.getByRole("alert");
       await review.waitFor({ state: "visible" });
       expect(await review.textContent()).toContain("Security review needed");
+      await review
+        .getByText("ClawScan found issues to review.", { exact: true })
+        .waitFor({ state: "visible" });
       expect(await review.textContent()).toContain("Policy warnings: 1");
       expect(await review.textContent()).toContain("Not installed");
       expect(await review.textContent()).toContain("Warning");

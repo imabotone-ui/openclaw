@@ -733,6 +733,9 @@ describe("renderPlugins", () => {
     expect(normalizedText(alert)).toContain("Warning Semgrep found a risky command.");
     expect(normalizedText(alert)).toContain("Critical The package executes an untrusted binary.");
     expect(normalizedText(alert)).toContain("Semgrep found a risky command.");
+    expect(normalizedText(alert.querySelector(".plugins-policy-review__reason"))).toBe(
+      "ClawScan found issues to review.",
+    );
     const technicalDetails = expectDefined(
       alert.querySelector<HTMLDetailsElement>(".plugins-policy-review__details"),
       "install policy scan details",
@@ -742,6 +745,7 @@ describe("renderPlugins", () => {
     expect(
       technicalDetails?.querySelector(".plugins-policy-review__details-chevron svg"),
     ).not.toBeNull();
+    expect(normalizedText(technicalDetails)).not.toContain("ClawScan found issues to review.");
     expect(normalizedText(technicalDetails)).toContain("semgrep-finding");
     expect(normalizedText(technicalDetails)).toContain("index.ts:12");
     technicalDetails.querySelector("summary")?.click();
