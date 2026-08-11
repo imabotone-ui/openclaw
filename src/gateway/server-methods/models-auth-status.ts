@@ -48,11 +48,8 @@ import { coerceSecretRef, hasConfiguredSecretInput } from "../../config/types.se
 import { providerUsageLabel, resolveUsageProviderId } from "../../infra/provider-usage.shared.js";
 import type { UsageProviderId } from "../../infra/provider-usage.types.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
-import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
-import { resolveManifestProviderAuthChoices } from "../../plugins/provider-auth-choices.js";
 import { refreshActiveProviderAuthRuntimeSnapshot } from "../../secrets/runtime.js";
 import { asDateTimestampMs } from "../../shared/number-coercion.js";
-import { supportsSetupManualSecret } from "../../system-agent/setup-inference-auth-options.js";
 import { abortChatRunsForProvider, type ChatAbortOps } from "../chat-abort.js";
 import type { GatewayRequestContextWithClientLookup } from "../server-request-context.js";
 import { formatForLog } from "../ws-log.js";
@@ -71,8 +68,8 @@ import type {
   ModelAuthLogoutResult,
   ModelAuthStatusProvider,
   ModelAuthStatusResult,
-  ModelProviderCapability,
 } from "./models-auth-status.types.js";
+import { resolveModelProviderCapabilities } from "./models-provider-capabilities.js";
 import type { GatewayRequestContext, GatewayRequestHandlers } from "./types.js";
 
 export type {
@@ -86,39 +83,6 @@ export type {
 
 const log = createSubsystemLogger("models-auth-status");
 const apiKeyUsageStatusProviders = new Set<UsageProviderId>(["clawrouter", "deepseek"]);
-
-function buildProviderCapabilities(params: {
-  config: OpenClawConfig;
-  workspaceDir: string;
-  metadataSnapshot: PluginMetadataSnapshot;
-}): ModelProviderCapability[] {
-  const capabilities = new Map<string, ModelProviderCapability>();
-  for (const choice of resolveManifestProviderAuthChoices({
-    config: params.config,
-    workspaceDir: params.workspaceDir,
-    includeUntrustedWorkspacePlugins: false,
-    metadataSnapshot: params.metadataSnapshot,
-  })) {
-    const provider = resolveProviderIdForAuth(choice.providerId, {
-      config: params.config,
-      workspaceDir: params.workspaceDir,
-      includeUntrustedWorkspacePlugins: false,
-      metadataSnapshot: params.metadataSnapshot,
-    });
-    if (!provider) {
-      continue;
-    }
-    const current = capabilities.get(provider);
-    const apiKeySupported = choice.methodId === "api-key";
-    const quickApiKeySetup = apiKeySupported && supportsSetupManualSecret(choice);
-    capabilities.set(provider, {
-      provider,
-      apiKeySupported: current?.apiKeySupported === true || apiKeySupported,
-      quickApiKeySetup: current?.quickApiKeySetup === true || quickApiKeySetup,
-    });
-  }
-  return [...capabilities.values()].toSorted((a, b) => a.provider.localeCompare(b.provider));
-}
 
 /**
  * Invalidate auxiliary usage and prepared provider-auth state after an auth
@@ -703,11 +667,11 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
         .readPreparedGatewayModelCatalogSnapshot?.({ agentId })
         .catch(() => undefined);
       const providerCapabilities = preparedSnapshot
-        ? buildProviderCapabilities({
+        ? resolveModelProviderCapabilities({
             config: preparedSnapshot.config,
             workspaceDir: preparedSnapshot.workspaceDir,
             metadataSnapshot: preparedSnapshot.metadataSnapshot,
-          })
+          }).entries
         : undefined;
       const result: ModelAuthStatusResult = {
         ts: now,

@@ -46,12 +46,10 @@ import {
   openAIModelCatalogRoutePolicy,
 } from "../../agents/openai-model-routes.js";
 import { publishedModelCatalogOwnerMatchesAgent } from "../../agents/prepared-model-catalog-owner.js";
-import { resolveProviderIdForAuth } from "../../agents/provider-auth-aliases.js";
 import { resolveDefaultAgentWorkspaceDir } from "../../agents/workspace.js";
 import { getRuntimeConfigSourceSnapshot } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
-import { resolveManifestProviderAuthChoices } from "../../plugins/provider-auth-choices.js";
 import type { ProviderCatalogOutcome } from "../../plugins/provider-catalog.types.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 import type { GatewayAgentRuntime } from "../../shared/session-types.js";
@@ -59,6 +57,10 @@ import type { PreparedGatewayModelCatalogSnapshot } from "../server-model-catalo
 import type { GatewayRequestContextWithClientLookup } from "../server-request-context.js";
 import { resolveGatewayModelThinkingProfile } from "../session-utils-model.js";
 import { createModelsListAuthResolver } from "./models-list-auth-resolver.js";
+import {
+  resolveModelProviderCapabilities,
+  type ResolvedModelProviderCapabilities,
+} from "./models-provider-capabilities.js";
 import type { GatewayRequestContext } from "./types.js";
 
 type ModelsListEntry = Pick<
@@ -66,10 +68,6 @@ type ModelsListEntry = Pick<
   "alias" | "contextWindow" | "id" | "input" | "name" | "provider" | "reasoning"
 > & { available?: boolean; supportsTools?: boolean };
 type ModelsListEntryWithCapabilities = ModelChoice;
-type ApiKeyProviderCapabilities = {
-  providers: ReadonlyMap<string, boolean>;
-  resolveProvider(provider: string): string;
-};
 type ModelsListAvailability = ModelAuthAvailability;
 type ModelsListEntryEvaluation = ModelAuthAvailabilityEvaluation;
 type ModelsListResult = {
@@ -422,7 +420,7 @@ async function buildPublicModelsListEntries(params: {
   evaluateEntry(entry: ModelCatalogEntry): Promise<ModelsListEntryEvaluation>;
   includeInput?: boolean;
   preserveUnknownAvailability?: boolean;
-  apiKeyCapabilities?: ApiKeyProviderCapabilities;
+  apiKeyCapabilities?: ResolvedModelProviderCapabilities;
 }): Promise<ModelsListEntryWithCapabilities[]> {
   return Promise.all(
     params.catalog.map(async (entry): Promise<ModelsListEntryWithCapabilities> => {
@@ -455,9 +453,11 @@ async function buildPublicModelsListEntries(params: {
         ...buildPublicModelProjection(entry),
         ...(agentRuntime ? { agentRuntime } : {}),
         ...thinkingProfile,
-        ...(capabilityProvider && params.apiKeyCapabilities?.providers.has(capabilityProvider)
+        ...(capabilityProvider && params.apiKeyCapabilities?.byProvider.has(capabilityProvider)
           ? {
-              apiKeySupported: params.apiKeyCapabilities.providers.get(capabilityProvider) === true,
+              apiKeySupported:
+                params.apiKeyCapabilities.byProvider.get(capabilityProvider)?.apiKeySupported ===
+                true,
             }
           : {}),
         ...(params.includeInput && entry.input?.length ? { input: entry.input } : {}),
@@ -467,36 +467,6 @@ async function buildPublicModelsListEntries(params: {
       };
     }),
   );
-}
-
-function apiKeyProviderCapabilities(params: {
-  cfg: OpenClawConfig;
-  metadataSnapshot: PluginMetadataSnapshot;
-  workspaceDir: string;
-}): ApiKeyProviderCapabilities {
-  const capabilities = new Map<string, boolean>();
-  const resolveProvider = (provider: string) =>
-    resolveProviderIdForAuth(provider, {
-      config: params.cfg,
-      workspaceDir: params.workspaceDir,
-      env: process.env,
-      includeUntrustedWorkspacePlugins: false,
-      metadataSnapshot: params.metadataSnapshot,
-    });
-  for (const choice of resolveManifestProviderAuthChoices({
-    config: params.cfg,
-    workspaceDir: params.workspaceDir,
-    env: process.env,
-    includeUntrustedWorkspacePlugins: false,
-    metadataSnapshot: params.metadataSnapshot,
-  })) {
-    const provider = resolveProvider(choice.providerId);
-    capabilities.set(
-      provider,
-      capabilities.get(provider) === true || choice.methodId === "api-key",
-    );
-  }
-  return { providers: capabilities, resolveProvider };
 }
 
 type BuildModelsListResultParams = {
@@ -635,7 +605,7 @@ export async function buildModelsListResult(
   }
   const includeProviderCapabilities = params.params.includeProviderCapabilities === true;
   const capableProviders = includeProviderCapabilities
-    ? apiKeyProviderCapabilities({ cfg, metadataSnapshot, workspaceDir })
+    ? resolveModelProviderCapabilities({ config: cfg, metadataSnapshot, workspaceDir })
     : undefined;
   if (view === "provider-config") {
     const sourceConfig = getRuntimeConfigSourceSnapshot() ?? cfg;
