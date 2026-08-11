@@ -2,6 +2,7 @@
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
+import { findNormalizedProviderValue } from "@openclaw/model-catalog-core/provider-id";
 import { resolveInstalledManifestRegistryIndexFingerprint } from "../plugins/manifest-registry-installed.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import type { ModelCatalogSnapshot } from "./model-catalog.types.js";
@@ -12,7 +13,8 @@ import {
   type PreparedModelRuntimeAgentFacts,
 } from "./prepared-model-runtime.facts.js";
 import type { PreparedModelRuntimeInput } from "./prepared-model-runtime.types.js";
-import type { AuthStorageData } from "./sessions/auth-storage.js";
+import { resolveProviderIdForAuth } from "./provider-auth-aliases.js";
+import type { AuthCredential, AuthStorageData } from "./sessions/auth-storage.js";
 
 export type PreparedModelCatalogWorkerInput = Readonly<{
   generationFingerprint: string;
@@ -59,6 +61,36 @@ export function fingerprintPreparedModelCatalogGeneration(params: {
   });
 }
 
+function projectWorkerCredential(credential: AuthCredential): AuthCredential {
+  // OAuth providers may attach fields consumed by their modifyModels hook.
+  const projected = { ...credential } as AuthCredential & Record<string, unknown>;
+  delete projected.keyRef;
+  delete projected.tokenRef;
+  return projected;
+}
+
+function projectPreparedModelCatalogWorkerCredentials(params: {
+  agentFacts: PreparedModelRuntimeAgentFacts;
+  pluginMetadataSnapshot: PluginMetadataSnapshot;
+}): AuthStorageData {
+  const { input } = params.agentFacts;
+  const credentials: AuthStorageData = {};
+  // providerIds already closes over configured refs and explicit provider config.
+  for (const provider of params.agentFacts.providerIds) {
+    const authProvider = resolveProviderIdForAuth(provider, {
+      config: input.config,
+      env: params.agentFacts.env,
+      ...(input.workspaceDir ? { workspaceDir: input.workspaceDir } : {}),
+      metadataSnapshot: params.pluginMetadataSnapshot,
+    });
+    const credential = findNormalizedProviderValue(params.agentFacts.credentials, authProvider);
+    if (credential) {
+      credentials[authProvider] = projectWorkerCredential(credential);
+    }
+  }
+  return credentials;
+}
+
 export function createPreparedModelCatalogWorkerInput(params: {
   agentFacts: PreparedModelRuntimeAgentFacts;
   pluginMetadataSnapshot: PluginMetadataSnapshot;
@@ -80,7 +112,7 @@ export function createPreparedModelCatalogWorkerInput(params: {
       : {}),
     config: source.config,
   };
-  const credentials = params.agentFacts.credentials;
+  const credentials = projectPreparedModelCatalogWorkerCredentials(params);
   const providerIds = [...params.agentFacts.providerIds];
   return {
     generationFingerprint: fingerprintPreparedModelCatalogGeneration({

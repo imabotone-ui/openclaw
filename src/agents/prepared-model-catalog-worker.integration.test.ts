@@ -18,6 +18,7 @@ import { startSerializedSnapshotBuild } from "./prepared-model-runtime.build.js"
 const PROVIDER_ID = "worker-catalog-fixture";
 const PLUGIN_ID = "worker-catalog-fixture";
 const MATERIALIZED_SECRET = "materialized-worker-secret-not-real";
+const UNRELATED_SECRET = "unrelated-worker-secret-not-real";
 const tempDirs: string[] = [];
 
 afterEach(() => {
@@ -50,10 +51,11 @@ module.exports = {
           (entry) => entry.provider === ${JSON.stringify(PROVIDER_ID)} && entry.id === "sqlite-model",
         );
         const hasAuth = context.resolveProviderApiKey(${JSON.stringify(PROVIDER_ID)}).apiKey === ${JSON.stringify(MATERIALIZED_SECRET)};
+        const leakedUnrelated = context.resolveProviderApiKey("unrelated-provider").apiKey === ${JSON.stringify(UNRELATED_SECRET)};
         fs.appendFileSync(process.env.OPENCLAW_WORKER_CATALOG_MARKER, "done\\n");
         return [{
           provider: ${JSON.stringify(PROVIDER_ID)},
-          id: \`proof-sqlite-\${hasSqlite}-auth-\${hasAuth}\`,
+          id: \`proof-sqlite-\${hasSqlite}-auth-\${hasAuth}-unrelated-\${leakedUnrelated}\`,
           name: "Worker boundary proof",
         }];
       },
@@ -111,6 +113,12 @@ async function createStaticSnapshot(params: { spinMs: number }) {
             provider: PROVIDER_ID,
             key: MATERIALIZED_SECRET,
             keyRef: { source: "env", provider: "default", id: "FIXTURE_SECRET_REF" },
+          },
+          "unrelated-provider:default": {
+            type: "api_key",
+            provider: "unrelated-provider",
+            key: UNRELATED_SECRET,
+            keyRef: { source: "env", provider: "default", id: "UNRELATED_SECRET_REF" },
           },
         },
       },
@@ -173,7 +181,7 @@ describe("prepared model catalog worker boundary", () => {
     expect(catalog?.entries).toContainEqual(
       expect.objectContaining({
         provider: PROVIDER_ID,
-        id: "proof-sqlite-true-auth-true",
+        id: "proof-sqlite-true-auth-true-unrelated-false",
       }),
     );
     await expect(fixture.snapshot.loadFullModelCatalog?.()).resolves.toBe(catalog);
