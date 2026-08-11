@@ -6,6 +6,7 @@ import type {
   InstallPolicyWarningDetails,
   InstallPolicyWarningOccurrence,
 } from "../../plugins/install-security-scan.types.js";
+import { parseInstallPolicyResponse } from "../../security/install-policy-response.js";
 
 type InstallPolicyWarningScanIdentity = InstallPolicyWarningOccurrence["scan"];
 type ManagementServiceModule = typeof import("../../plugins/management-service.js");
@@ -636,6 +637,59 @@ describe("plugin management Gateway handlers", () => {
           resolvedRequest,
           warnings: [firstWarning, secondWarning],
         },
+      },
+    });
+  });
+
+  it("preserves normalized finding lines in structured warning details", async () => {
+    const policyResult = parseInstallPolicyResponse(
+      JSON.stringify({
+        protocolVersion: 1,
+        decision: "warn",
+        reason: "Review line normalization",
+        findings: [
+          {
+            ruleId: "large-line",
+            severity: "warn",
+            message: "Review line",
+            line: 1e100,
+          },
+        ],
+      }),
+      { sourcePath: "/tmp/staged-plugin" },
+    );
+    const warning = expectDefined(policyResult.warning, "expected parsed install-policy warning");
+
+    managementMocks.install.mockRejectedValue(
+      new ManagedPluginLifecycleError("Install requires approval", {
+        installPolicyResolvedRequest: {
+          source: "clawhub",
+          spec: "clawhub:community/plugin@1.0.0",
+        },
+        installPolicyWarning: {
+          scan: packageScan,
+          warning: {
+            targetName: "demo-plugin",
+            targetType: "plugin",
+            requestMode: "install",
+            reason: warning.reason,
+            findings: policyResult.findings,
+          },
+          approvalFingerprint: warning.approvalFingerprint,
+        },
+      }),
+    );
+
+    const result = await callHandler("plugins.install", {
+      source: "clawhub",
+      packageName: "community/plugin",
+    });
+
+    expect(result.error).toMatchObject({
+      code: "INVALID_REQUEST",
+      details: {
+        findings: [{ line: Number.MAX_SAFE_INTEGER }],
+        acknowledgementToken: expect.any(String),
       },
     });
   });

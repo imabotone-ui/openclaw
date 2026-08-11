@@ -36,6 +36,26 @@ describe("install policy warning error details", () => {
     ).toEqual(expectedWarning);
   });
 
+  it("accepts the largest wire-safe finding line", () => {
+    expect(
+      readInstallPolicyWarningErrorDetails({
+        ...expectedWarning,
+        findings: [{ ...completeWarning.findings?.[0], line: Number.MAX_SAFE_INTEGER }],
+      }),
+    ).toMatchObject({
+      findings: [{ line: Number.MAX_SAFE_INTEGER }],
+    });
+  });
+
+  it("rejects finding lines outside the wire-safe range", () => {
+    expect(
+      readInstallPolicyWarningErrorDetails({
+        ...expectedWarning,
+        findings: [{ ...completeWarning.findings?.[0], line: Number.MAX_SAFE_INTEGER + 1 }],
+      }),
+    ).toBeUndefined();
+  });
+
   it.each([
     null,
     {},

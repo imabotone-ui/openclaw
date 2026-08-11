@@ -202,6 +202,12 @@ one explicit retry with the returned `acknowledgementToken` as
 token once and only for the same install request and resolved artifact. OpenClaw
 re-evaluates the staged source and continues when that fresh evaluation allows
 the install or repeats the unchanged warning the operator approved.
+Treat `acknowledgementToken` as a short-lived bearer secret. It is not bound to
+the Gateway connection, device, or operator that received it: any authenticated
+`operator.admin` client that has the token and submits the same install request
+may consume it once for the matching resolved artifact. Keep it only in memory
+for the immediate reviewed retry; do not log, persist, or forward it. Tokens
+expire after five minutes and are invalidated by a Gateway restart.
 A changed or later warning stops the request before commit and receives a fresh
 token when the artifact remains immutably resolved. A block or a warning without
 immutable resolution metadata is terminal and has no acknowledgement token. Other
