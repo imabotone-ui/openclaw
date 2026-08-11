@@ -48,6 +48,7 @@ import { coerceSecretRef, hasConfiguredSecretInput } from "../../config/types.se
 import { providerUsageLabel, resolveUsageProviderId } from "../../infra/provider-usage.shared.js";
 import type { UsageProviderId } from "../../infra/provider-usage.types.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
 import { resolveManifestProviderAuthChoices } from "../../plugins/provider-auth-choices.js";
 import { refreshActiveProviderAuthRuntimeSnapshot } from "../../secrets/runtime.js";
 import { asDateTimestampMs } from "../../shared/number-coercion.js";
@@ -88,11 +89,7 @@ const apiKeyUsageStatusProviders = new Set<UsageProviderId>(["clawrouter", "deep
 function buildProviderCapabilities(params: {
   config: OpenClawConfig;
   workspaceDir: string;
-  metadataSnapshot: NonNullable<
-    Awaited<
-      ReturnType<NonNullable<GatewayRequestContext["readPreparedGatewayModelCatalogSnapshot"]>>
-    >
-  >["metadataSnapshot"];
+  metadataSnapshot: PluginMetadataSnapshot;
 }): ModelProviderCapability[] {
   const capabilities = new Map<string, ModelProviderCapability>();
   for (const choice of resolveManifestProviderAuthChoices({
