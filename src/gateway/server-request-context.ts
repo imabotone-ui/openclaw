@@ -24,6 +24,9 @@ type GatewayRequestContextClient = GatewayClient & {
   invalidatedReason?: string;
 };
 
+type ReadPreparedGatewayModelCatalogSnapshot =
+  typeof import("./server-model-catalog.js").readPreparedGatewayModelCatalogSnapshot;
+
 type GatewayRequestContextParams = {
   deps: GatewayRequestContext["deps"];
   runtimeState: Pick<
@@ -46,7 +49,7 @@ type GatewayRequestContextParams = {
   listSessionPendingApprovals: GatewayRequestContext["listSessionPendingApprovals"];
   loadGatewayModelCatalog: GatewayRequestContext["loadGatewayModelCatalog"];
   loadGatewayModelCatalogSnapshot: GatewayRequestContext["loadGatewayModelCatalogSnapshot"];
-  readPreparedGatewayModelCatalogSnapshot?: GatewayRequestContext["readPreparedGatewayModelCatalogSnapshot"];
+  readPreparedGatewayModelCatalogSnapshot?: ReadPreparedGatewayModelCatalogSnapshot;
   readPreparedGatewayModelCatalog?: GatewayRequestContext["readPreparedGatewayModelCatalog"];
   readChatMetadata: GatewayRequestContext["readChatMetadata"];
   readChatStartupProjection?: GatewayRequestContext["readChatStartupProjection"];
@@ -158,6 +161,7 @@ function canDeliverApprovals(
 
 export type GatewayRequestContextWithClientLookup = GatewayRequestContext & {
   getClientConnIds?: (filter?: (client: GatewayClient) => boolean) => ReadonlySet<string>;
+  readPreparedGatewayModelCatalogSnapshot?: ReadPreparedGatewayModelCatalogSnapshot;
 };
 
 export function createGatewayRequestContext(

@@ -55,6 +55,8 @@ import { resolveManifestProviderAuthChoices } from "../../plugins/provider-auth-
 import type { ProviderCatalogOutcome } from "../../plugins/provider-catalog.types.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 import type { GatewayAgentRuntime } from "../../shared/session-types.js";
+import type { PreparedGatewayModelCatalogSnapshot } from "../server-model-catalog.js";
+import type { GatewayRequestContextWithClientLookup } from "../server-request-context.js";
 import { resolveGatewayModelThinkingProfile } from "../session-utils-model.js";
 import { createModelsListAuthResolver } from "./models-list-auth-resolver.js";
 import type { GatewayRequestContext } from "./types.js";
@@ -527,7 +529,9 @@ export async function buildModelsListResult(
   const preparedOwnerSnapshot =
     preloadedCatalog && params.catalogProjector
       ? undefined
-      : await params.context.readPreparedGatewayModelCatalogSnapshot?.({ agentId: initialAgentId });
+      : await (
+          params.context as GatewayRequestContextWithClientLookup
+        ).readPreparedGatewayModelCatalogSnapshot?.({ agentId: initialAgentId });
   let loadedSnapshot:
     | Awaited<ReturnType<GatewayRequestContext["loadGatewayModelCatalogSnapshot"]>>
     | undefined;
@@ -624,7 +628,9 @@ export async function buildModelsListResult(
   const providerOutcomes = snapshot.providerOutcomes;
   const outcomeProjection = providerOutcomes?.length ? { providerOutcomes } : {};
   const metadataSnapshot =
-    ownerSnapshot?.metadataSnapshot ??
+    (loadedSnapshot as Partial<PreparedGatewayModelCatalogSnapshot> | undefined)
+      ?.metadataSnapshot ??
+    preparedOwnerSnapshot?.metadataSnapshot ??
     (usedPreloadedCatalog ? params.catalogProjector?.metadataSnapshot : undefined);
   if (!metadataSnapshot) {
     throw new Error("Gateway model catalog owner omitted its plugin metadata snapshot");

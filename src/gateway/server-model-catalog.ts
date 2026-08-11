@@ -1,11 +1,12 @@
 import { resolvePublishedModelCatalogOwner } from "../agents/prepared-model-catalog-owner.js";
-import type { PublishedModelCatalogOwnerCandidate } from "../agents/prepared-model-catalog.types.js";
+import type {
+  PublishedModelCatalogOwnerCandidate,
+  ResolvedPublishedModelCatalogOwner,
+} from "../agents/prepared-model-catalog.types.js";
 // Gateway catalog reads use the atomic prepared runtime generation.
 import { getRuntimeConfig } from "../config/io.js";
-import type {
-  GatewayModelCatalogOwnerSnapshot,
-  GatewayModelCatalogSnapshot,
-} from "./server-model-catalog.types.js";
+import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
+import type { GatewayModelCatalogSnapshot } from "./server-model-catalog.types.js";
 
 export type GatewayModelChoice = import("../agents/model-catalog.js").ModelCatalogEntry;
 export type { GatewayModelCatalogSnapshot } from "./server-model-catalog.types.js";
@@ -51,7 +52,7 @@ export async function resetPreparedModelCatalogStateForTest(): Promise<void> {
 
 async function loadGatewayModelCatalogOwnerSnapshot(
   params?: LoadGatewayModelCatalogParams,
-): Promise<GatewayModelCatalogOwnerSnapshot> {
+): Promise<ResolvedPublishedModelCatalogOwner> {
   const loadOwner = await resolveLoader(params);
   return resolvePublishedModelCatalogOwner(
     await loadOwner({
@@ -64,9 +65,13 @@ async function loadGatewayModelCatalogOwnerSnapshot(
   );
 }
 
+export type PreparedGatewayModelCatalogSnapshot = GatewayModelCatalogSnapshot & {
+  metadataSnapshot: PluginMetadataSnapshot;
+};
+
 function projectGatewayModelCatalogSnapshot(
-  owner: GatewayModelCatalogOwnerSnapshot,
-): GatewayModelCatalogSnapshot {
+  owner: ResolvedPublishedModelCatalogOwner,
+): PreparedGatewayModelCatalogSnapshot {
   return {
     ...owner.modelCatalog,
     agentId: owner.agentId,
@@ -107,7 +112,7 @@ export async function readPreparedGatewayModelCatalog(
 /** Reads the published owner generation without activating or materializing catalog discovery. */
 export async function readPreparedGatewayModelCatalogSnapshot(
   params?: LoadGatewayModelCatalogParams,
-): Promise<GatewayModelCatalogSnapshot | undefined> {
+): Promise<PreparedGatewayModelCatalogSnapshot | undefined> {
   const { getPublishedPreparedModelCatalogOwnerSnapshot } =
     await import("../agents/prepared-model-catalog.js");
   const config = (params?.getConfig ?? getRuntimeConfig)();

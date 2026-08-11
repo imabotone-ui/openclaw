@@ -54,6 +54,7 @@ import { refreshActiveProviderAuthRuntimeSnapshot } from "../../secrets/runtime.
 import { asDateTimestampMs } from "../../shared/number-coercion.js";
 import { supportsSetupManualSecret } from "../../system-agent/setup-inference-auth-options.js";
 import { abortChatRunsForProvider, type ChatAbortOps } from "../chat-abort.js";
+import type { GatewayRequestContextWithClientLookup } from "../server-request-context.js";
 import { formatForLog } from "../ws-log.js";
 import {
   resolveModelAuthAgentScope,
@@ -698,7 +699,7 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
           configBoundProfileIds,
         ),
       );
-      const preparedSnapshot = await context
+      const preparedSnapshot = await (context as GatewayRequestContextWithClientLookup)
         .readPreparedGatewayModelCatalogSnapshot?.({ agentId })
         .catch(() => undefined);
       const providerCapabilities = preparedSnapshot

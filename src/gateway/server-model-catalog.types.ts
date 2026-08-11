@@ -3,7 +3,7 @@ import type { ResolvedPublishedModelCatalogOwner } from "../agents/prepared-mode
 
 export type GatewayModelCatalogOwnerSnapshot = Omit<
   ResolvedPublishedModelCatalogOwner,
-  "pluginRegistry"
+  "metadataSnapshot" | "pluginRegistry"
 >;
 
 export type GatewayModelCatalogSnapshot = ModelCatalogSnapshot &

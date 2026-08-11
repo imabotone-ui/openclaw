@@ -22,6 +22,8 @@ import type { ChannelRuntimeSnapshot } from "./server-channel-runtime.types.js";
 import { createChatRunState } from "./server-chat-state.js";
 import type { GatewayCronServiceContract } from "./server-cron-contract.js";
 import type { GatewayRequestContext } from "./server-methods/types.js";
+import { readPreparedGatewayModelCatalogSnapshot } from "./server-model-catalog.js";
+import type { GatewayRequestContextWithClientLookup } from "./server-request-context.js";
 
 // Embedded/local agent calls need enough GatewayRequestContext to reuse server
 // methods without starting the full gateway. Unsupported subsystems fail loudly
@@ -64,7 +66,7 @@ const unavailableCron: GatewayCronServiceContract = {
 /** Creates the minimal gateway context used by embedded local agent execution. */
 function createLocalGatewayRequestContext(
   params: LocalGatewayRequestContextParams,
-): GatewayRequestContext {
+): GatewayRequestContextWithClientLookup {
   const logGateway = createSubsystemLogger("gateway/local");
   const cron: GatewayCronServiceContract = {
     ...unavailableCron,
@@ -132,6 +134,11 @@ function createLocalGatewayRequestContext(
         metadataSnapshot: owner.metadataSnapshot,
       };
     },
+    readPreparedGatewayModelCatalogSnapshot: async (loadParams) =>
+      await readPreparedGatewayModelCatalogSnapshot({
+        ...loadParams,
+        getConfig: params.getRuntimeConfig,
+      }),
     readPreparedGatewayModelCatalog: async (loadParams) =>
       getPreparedModelCatalogSnapshot({
         ...loadParams,
