@@ -102,7 +102,7 @@ function requestModelsList(params: {
           routeVariants: entries,
         };
       },
-      readPreparedGatewayModelCatalogSnapshot: async (loadParams) => {
+      readPreparedGatewayModelCatalogSnapshot: async (loadParams?: { agentId?: string }) => {
         const config = getRuntimeConfig();
         return {
           agentId: loadParams?.agentId ?? resolveDefaultAgentId(config),

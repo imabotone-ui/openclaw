@@ -53,7 +53,7 @@ describe("prepared model catalog worker", () => {
             providerAuthAliases: { "provider-alias": "canonical" },
           } as never,
         ],
-      } as PluginMetadataSnapshot,
+      } as unknown as PluginMetadataSnapshot,
     });
 
     expect(structuredClone(workerInput).credentials).toEqual({

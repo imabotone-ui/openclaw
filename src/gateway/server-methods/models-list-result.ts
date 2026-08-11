@@ -507,8 +507,6 @@ type BuildModelsListResultParams = {
     agentId: string;
     config: OpenClawConfig;
     snapshot: ModelCatalogSnapshot;
-    /** The owner already ran full discovery for this exact snapshot. */
-    fullyDiscovered?: boolean;
   };
   catalogProjector?: ReturnType<typeof createGatewayAgentModelCatalogProjector>;
   preloadedOnly?: boolean;
@@ -552,11 +550,11 @@ export async function buildModelsListResult(
     view,
     loadCatalog: async (loadParams) => {
       loadedReadOnly = loadParams.readOnly ?? true;
-      // A read-only preload cannot satisfy a full-discovery request. Reuse it only when the
-      // owner carried the completed-discovery fact with the exact snapshot.
+      // Chat startup deliberately projects its exact lifecycle snapshot without triggering
+      // optional discovery. The paired projector carries the matching metadata and auth facts.
       if (
         preloadedCatalog &&
-        (loadedReadOnly || (params.preloadedOnly && preloadedCatalog.fullyDiscovered === true))
+        (loadedReadOnly || (params.preloadedOnly && params.catalogProjector !== undefined))
       ) {
         usedPreloadedCatalog = true;
         return preloadedCatalog.snapshot;

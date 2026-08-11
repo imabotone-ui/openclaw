@@ -4,6 +4,8 @@ import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 type CreateStaticCatalogResolver =
   typeof import("./embedded-agent-runner/model.static-catalog.js").createBundledStaticCatalogModelResolver;
 type StaticCatalogResolver = ReturnType<CreateStaticCatalogResolver>;
+type RunPreparedModelCatalogWorker =
+  typeof import("./prepared-model-catalog-worker.js").runPreparedModelCatalogWorker;
 
 const mocks = vi.hoisted(() => {
   const metadataSnapshot = {
@@ -60,7 +62,7 @@ const mocks = vi.hoisted(() => {
     buildPreparedModelCatalogSnapshot: vi.fn(async () => ({ entries: [], routeVariants: [] })),
     loadAgentRuntimePluginRegistryHandle: vi.fn(),
     loadStaticCatalog: vi.fn(async () => []),
-    runPreparedModelCatalogWorker: vi.fn(async () => ({
+    runPreparedModelCatalogWorker: vi.fn<RunPreparedModelCatalogWorker>(async () => ({
       entries: [],
       routeVariants: [],
     })),
@@ -115,7 +117,7 @@ vi.mock("./prepared-model-catalog-worker.js", () => ({
     credentials: agentFacts.credentials,
     providerIds: agentFacts.providerIds,
   }),
-  runPreparedModelCatalogWorker: (...args: unknown[]) =>
+  runPreparedModelCatalogWorker: (...args: Parameters<RunPreparedModelCatalogWorker>) =>
     mocks.runPreparedModelCatalogWorker(...args),
 }));
 

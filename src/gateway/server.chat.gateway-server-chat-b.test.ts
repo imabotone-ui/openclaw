@@ -107,7 +107,6 @@ function createChatVisionModelCatalogSnapshot(): Awaited<
     agentDir: "/tmp/chat-attachment-vision-agent",
     workspaceDir: "/tmp/chat-attachment-vision-workspace",
     config: {},
-    metadataSnapshot: {} as never,
     entries: [
       {
         id: "vision-model",
@@ -1294,6 +1293,7 @@ describe("gateway server chat", () => {
             compat: { supportedReasoningEfforts: ["low"] },
             params: { apiKey: "private-route-token" },
           };
+          const pluginMetadata = resolvePluginMetadataSnapshot({ config, env: process.env });
           const catalogSnapshot = {
             entries: [subscriptionRoute],
             routeVariants: [subscriptionRoute, platformRoute],
@@ -1349,6 +1349,7 @@ describe("gateway server chat", () => {
               cfg: config,
               agentId,
               snapshot: catalogSnapshot,
+              metadataSnapshot: pluginMetadata,
               preparedAuthStore: preparedAuthStoreByAgentId.get(agentId),
               ...(profileId ? { preferredProfileId: profileId } : {}),
               ...(profileId && (profileSource === "user" || legacyUserProfile)
@@ -1410,7 +1411,6 @@ describe("gateway server chat", () => {
           const persistedConfig = getRuntimeConfig();
           // Direct handlers bypass Gateway startup, so publish its process-lifecycle handoff once.
           // Otherwise every route projector rediscovers the full plugin metadata graph.
-          const pluginMetadata = resolvePluginMetadataSnapshot({ config, env: process.env });
           releasePluginMetadata = installTemporaryCurrentPluginMetadataSnapshot(pluginMetadata, {
             config,
             compatibleConfigs: [persistedConfig],
@@ -1425,6 +1425,7 @@ describe("gateway server chat", () => {
             cfg: persistedConfig,
             agentId: "work",
             snapshot: catalogSnapshot,
+            metadataSnapshot: pluginMetadata,
             preferredProfileId: "openai:expired",
           }).evaluateEntry(subscriptionRoute, catalogSnapshot.routeVariants);
           expect(expiredPreferenceEvaluation).toMatchObject({

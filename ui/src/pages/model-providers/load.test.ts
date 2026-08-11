@@ -4,7 +4,7 @@ import { loadModelProvidersData } from "./load.ts";
 
 describe("loadModelProvidersData", () => {
   it("keeps full catalog discovery out of the initial page load", async () => {
-    const request = vi.fn(async (method: string) => {
+    const request = vi.fn(async (method: string, _params?: unknown) => {
       switch (method) {
         case "models.authStatus":
           return { ts: 1, providers: [], providerCapabilities: [] };

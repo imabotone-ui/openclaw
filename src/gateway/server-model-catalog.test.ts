@@ -13,7 +13,7 @@ import {
   loadGatewayModelCatalog,
   loadGatewayModelCatalogSnapshot,
   readPreparedGatewayModelCatalogSnapshot,
-  type GatewayModelCatalogSnapshot,
+  type PreparedGatewayModelCatalogSnapshot,
 } from "./server-model-catalog.js";
 
 const snapshot: ModelCatalogSnapshot = {
@@ -109,7 +109,7 @@ describe("gateway prepared model catalog", () => {
       config,
       metadataSnapshot,
       workspaceDir: "/tmp/gateway-workspace",
-    } satisfies Partial<GatewayModelCatalogSnapshot>);
+    } satisfies Partial<PreparedGatewayModelCatalogSnapshot>);
 
     expect(loadPublishedPreparedModelCatalogOwnerSnapshot).toHaveBeenCalledWith({
       agentId: "worker",

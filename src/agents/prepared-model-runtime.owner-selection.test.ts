@@ -19,6 +19,10 @@ import {
   resetPreparedModelRuntimeHarness,
 } from "./prepared-model-runtime.test-harness.js";
 
+type RunPreparedModelCatalogWorkerParams = Parameters<
+  typeof import("./prepared-model-catalog-worker.js").runPreparedModelCatalogWorker
+>[0];
+
 const mocks = getPreparedModelRuntimeMocks();
 
 describe("prepared model runtime owner selection", () => {
@@ -624,7 +628,8 @@ describe("prepared model runtime owner selection", () => {
     expect(peakActivePlans).toBe(1);
     expect(
       mocks.runPreparedModelCatalogWorker.mock.calls.map((call) => {
-        const credential = call[0].input.credentials.custom;
+        const credential = (call[0] as RunPreparedModelCatalogWorkerParams).input.credentials
+          .custom;
         if (credential?.type !== "api_key") {
           throw new Error("expected prepared custom API key");
         }

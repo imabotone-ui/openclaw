@@ -105,7 +105,7 @@ describe("models.list provider catalog outcomes", () => {
         context,
         agentId: "main",
         params: { view: "configured" },
-        preloadedCatalog: { agentId: "main", config, snapshot, fullyDiscovered: true },
+        preloadedCatalog: { agentId: "main", config, snapshot },
         preloadedOnly: true,
         catalogProjector: projector,
       }),

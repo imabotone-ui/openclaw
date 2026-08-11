@@ -223,7 +223,7 @@ describe("models.list OpenAI routes", () => {
     } as OpenClawConfig;
     const entry = catalogEntry("gpt-owner", "openai-responses");
     const loadGatewayModelCatalogSnapshot = vi
-      .fn<GatewayRequestContext["loadGatewayModelCatalogSnapshot"]>()
+      .fn()
       .mockResolvedValueOnce({
         agentId: "main",
         agentDir: "/tmp/models-list-main-agent",
@@ -268,7 +268,7 @@ describe("models.list OpenAI routes", () => {
     } as OpenClawConfig;
     const entry = catalogEntry("gpt-owner", "openai-responses");
     const loadGatewayModelCatalogSnapshot = vi
-      .fn<GatewayRequestContext["loadGatewayModelCatalogSnapshot"]>()
+      .fn()
       .mockResolvedValueOnce({
         agentId: "main",
         agentDir: "/tmp/models-list-main-agent",
