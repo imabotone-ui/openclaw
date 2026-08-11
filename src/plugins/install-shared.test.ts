@@ -3,10 +3,10 @@ import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { installPluginDirectoryIntoExtensions } from "./install-shared.js";
 import { PLUGIN_INSTALL_ERROR_CODE } from "./install-types.js";
-import { createSuiteTempRootTracker } from "./test-helpers/fs-fixtures.js";
+import { createSyncSuiteTempRootTracker } from "./test-helpers/fs-fixtures.js";
 
 describe("installPluginDirectoryIntoExtensions", () => {
-  const tempRoots = createSuiteTempRootTracker("openclaw-install-shared");
+  const tempRoots = createSyncSuiteTempRootTracker("openclaw-install-shared");
 
   afterAll(() => tempRoots.cleanup());
 
