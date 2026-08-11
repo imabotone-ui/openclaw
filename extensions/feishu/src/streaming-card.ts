@@ -14,6 +14,7 @@ import { FEISHU_HTTP_TIMEOUT_MS } from "./client-timeout.js";
 import { getFeishuUserAgent } from "./client.js";
 import { requestFeishuApi } from "./comment-shared.js";
 import { readFeishuJsonResponse } from "./json-response.js";
+import { assertFeishuMessageApiSuccess } from "./send-result.js";
 import { resolveFeishuCardTemplate, type CardHeaderConfig } from "./send.js";
 import { resolveStreamingCardSendMode } from "./streaming-card-send-mode.js";
 import type { FeishuDomain } from "./types.js";
@@ -26,7 +27,7 @@ type Credentials = {
 };
 type CardState = {
   cardId: string;
-  messageId: string;
+  messageId: string | undefined;
   sequence: number;
   currentText: string;
   sentText: string;
@@ -399,19 +400,18 @@ export class FeishuStreamingSession {
         "Send card failed",
       );
     }
-    if (sendRes.code !== 0 || !sendRes.data?.message_id) {
-      throw new Error(`Send card failed: ${sendRes.msg}`);
-    }
+    assertFeishuMessageApiSuccess(sendRes, "Send card failed");
+    const messageId = sendRes.data?.message_id?.trim() || undefined;
 
     this.state = {
       cardId,
-      messageId: sendRes.data.message_id,
+      messageId,
       sequence: 1,
       currentText: "",
       sentText: "",
       hasNote: Boolean(options?.note),
     };
-    this.log?.(`Started streaming: cardId=${cardId}, messageId=${sendRes.data.message_id}`);
+    this.log?.(`Started streaming: cardId=${cardId}, messageId=${messageId ?? "unavailable"}`);
   }
 
   private async updateCardContent(
@@ -640,7 +640,7 @@ export class FeishuStreamingSession {
     const apiBase = resolveApiBase(this.creds.domain);
     // A failed final rewrite does not erase previously accepted visible content.
     // sentText advances only for an accepted write; the return value reports any visible content.
-    let visibleContentSent = Boolean(this.state.sentText.trim());
+    let visibleContentSent = !this.state.messageId || Boolean(this.state.sentText.trim());
     let finalWriteError: unknown;
 
     // Only send final update if content differs from what's already displayed.
@@ -722,8 +722,8 @@ export class FeishuStreamingSession {
     this.log?.(`Closed streaming: cardId=${finalState.cardId}`);
     const result: FeishuStreamingCloseResult = {
       visibleReplySent: visibleContentSent,
-      ...(visibleContentSent ? { content: finalState.sentText } : {}),
-      messageId: finalState.messageId,
+      ...(finalState.sentText.trim() ? { content: finalState.sentText } : {}),
+      ...(finalState.messageId ? { messageId: finalState.messageId } : {}),
     };
     if (finalWriteError !== undefined || closeError !== undefined) {
       const cause =
@@ -738,19 +738,16 @@ export class FeishuStreamingSession {
     return result;
   }
 
-  async close(finalText?: string, options?: { note?: string }): Promise<boolean> {
-    try {
-      return (await this.closeWithResult(finalText, options)).visibleReplySent;
-    } catch (error: unknown) {
-      if (error instanceof FeishuStreamingFinalizationError) {
-        return error.result.visibleReplySent;
-      }
-      throw error;
-    }
-  }
-
   async discard(): Promise<void> {
     if (!this.state || this.closed) {
+      return;
+    }
+    const messageId = this.state.messageId;
+    if (!messageId) {
+      // CardKit accepted this single-send entity, but Feishu returned no message
+      // identity. Finalize it in place; retrying or deleting by a fabricated id
+      // would duplicate content or target an unrelated message.
+      await this.closeWithResult("");
       return;
     }
     this.closed = true;
@@ -760,7 +757,7 @@ export class FeishuStreamingSession {
     const currentState = this.state;
     try {
       const response = await this.client.im.message.delete({
-        path: { message_id: currentState.messageId },
+        path: { message_id: messageId },
       });
       if (response.code !== undefined && response.code !== 0) {
         throw new Error(`Delete streaming card message failed: ${response.msg ?? response.code}`);
@@ -771,7 +768,7 @@ export class FeishuStreamingSession {
     } catch (error) {
       this.log?.(`Discard failed: ${String(error)}`);
       this.closed = false;
-      await this.close("");
+      await this.closeWithResult("");
     }
   }
 

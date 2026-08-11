@@ -1048,7 +1048,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
               [...(providerFinalized ? [providerFinalized] : []), completion.result],
               deliveryError === undefined
                 ? (completion.result.content ?? providerFinalized?.content)
-                : (providerFinalized?.content ?? completion.result.content),
+                : (providerFinalized?.content ?? ""),
             );
             if (deliveryError !== undefined) {
               completion.reject(

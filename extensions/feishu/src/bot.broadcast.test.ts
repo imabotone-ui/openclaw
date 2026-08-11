@@ -445,8 +445,8 @@ describe("broadcast dispatch", () => {
     mockDispatchReply
       .mockResolvedValueOnce({ queuedFinal: false, counts: { final: 1 } })
       .mockResolvedValueOnce({
-        queuedFinal: true,
-        counts: { final: 1 },
+        queuedFinal: false,
+        counts: { final: 0 },
         failedCounts: { tool: 0, block: 0, final: 1 },
       });
     const ensureNoVisibleReplyFallback = vi.fn();

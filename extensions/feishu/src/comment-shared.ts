@@ -11,6 +11,7 @@ import {
   getFeishuSendRateLimitCode,
   getFeishuSendRateLimitCodeFromResponse,
 } from "./send-rate-limit.js";
+import { createFeishuRejectedMessageApiError } from "./send-result.js";
 
 export function encodeQuery(params: Record<string, string | undefined>): string {
   const query = new URLSearchParams();
@@ -128,6 +129,10 @@ export async function requestFeishuApi<T>(
       },
     );
   } catch (error) {
+    const rejection = createFeishuRejectedMessageApiError(error, errorPrefix);
+    if (rejection && getFeishuSendRateLimitCode(error) === undefined) {
+      throw rejection;
+    }
     throw createFeishuApiError(error, errorPrefix, options);
   }
 }

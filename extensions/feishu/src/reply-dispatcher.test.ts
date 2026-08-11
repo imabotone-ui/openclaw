@@ -1799,6 +1799,45 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     });
   });
 
+  it("settles an identity-less streaming final exactly once without static fallback", async () => {
+    const { result, options } = createDispatcherHarness();
+    const delivery = await options.deliver({ text: "accepted no-id final" }, { kind: "final" });
+    requireStreamingInstance(0).closeWithResult.mockResolvedValueOnce({
+      visibleReplySent: true,
+      content: "accepted no-id final",
+    });
+
+    await options.onIdle?.();
+
+    await expect(delivery?.finalization).resolves.toEqual({
+      visibleReplySent: true,
+      content: "accepted no-id final",
+    });
+    expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+    expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+    await expect(result.ensureNoVisibleReplyFallback("accepted-no-id-stream")).resolves.toBe(false);
+    expect(requireStreamingInstance(0).closeWithResult).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps identity-less accepted-card custody when final content update fails", async () => {
+    const { result, options } = createDispatcherHarness();
+    const delivery = await options.deliver({ text: "unaccepted final text" }, { kind: "final" });
+    requireStreamingInstance(0).closeWithResult.mockRejectedValueOnce(
+      new FeishuStreamingFinalizationError(new Error("final update failed"), {
+        visibleReplySent: true,
+      }),
+    );
+
+    await expect(options.onIdle?.()).rejects.toThrow("final update failed");
+    await expect(delivery?.finalization).rejects.toMatchObject({
+      code: "CHANNEL_PARTIAL_DELIVERY",
+      deliveryResult: { visibleReplySent: true, content: "" },
+    });
+    expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+    expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+    await expect(result.ensureNoVisibleReplyFallback("accepted-no-id-stream")).resolves.toBe(false);
+  });
+
   it("allows recovery after a final rewrite leaves only an earlier preview visible", async () => {
     const { result, options } = createDispatcherHarness();
     result.replyOptions.onPartialReply?.({ text: "accepted preview" });

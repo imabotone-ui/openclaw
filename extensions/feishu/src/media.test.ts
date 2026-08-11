@@ -2,6 +2,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
+import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
 import { withTempDir } from "openclaw/plugin-sdk/test-env";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClawdbotConfig } from "../runtime-api.js";
@@ -430,7 +431,7 @@ describe("sendMediaFeishu msg_type routing", () => {
     expect(callData<{ msg_type?: string }>(messageCreateMock).msg_type).toBe("image");
   });
 
-  it("preserves Feishu diagnostics when media sends reject before response checks", async () => {
+  it("classifies a structured media message rejection with bounded diagnostics", async () => {
     messageCreateMock.mockRejectedValueOnce(
       Object.assign(new Error("Request failed with status code 400"), {
         response: {
@@ -447,15 +448,16 @@ describe("sendMediaFeishu msg_type routing", () => {
       }),
     );
 
-    const send = sendMediaFeishu({
+    const error = await sendMediaFeishu({
       cfg: emptyConfig,
       to: "user:ou_target",
       mediaBuffer: validPngImage,
       fileName: "photo.png",
-    });
+    }).catch((caught: unknown) => caught);
 
-    await expect(send).rejects.toThrow(/Feishu image send failed: .*"feishu_code":9499/);
-    await expect(send).rejects.toThrow(/"feishu_log_id":"20260429124731MEDIA"/);
+    expect(error).toBeInstanceOf(PlatformMessageNotDispatchedError);
+    expect(error).toMatchObject({ retryable: false });
+    expect((error as Error).message).toBe("Feishu image send failed: Bad Request (code=9499)");
   });
 
   it("uses msg_type=media when replying with mp4", async () => {

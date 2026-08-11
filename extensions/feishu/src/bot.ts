@@ -114,11 +114,11 @@ function shouldSendNoVisibleReplyFallback(dispatchResult: {
     dispatchResult.noVisibleReplyFallbackEligible === true &&
     dispatchResult.queuedFinal !== true &&
     finalCount === 0;
-  const queuedFinalFailed = dispatchResult.queuedFinal === true && failedFinalCount > 0;
+  const finalDeliveryFailed = failedFinalCount > 0;
   return (
     dispatchResult.sendPolicyDenied !== true &&
     dispatchResult.sourceReplyDeliveryMode !== "message_tool_only" &&
-    (emptyEligibleDispatch || queuedFinalFailed)
+    (emptyEligibleDispatch || finalDeliveryFailed)
   );
 }
 

@@ -1,5 +1,6 @@
 // Feishu tests cover streaming card plugin behavior.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
 import type { LookupFn } from "openclaw/plugin-sdk/ssrf-runtime";
 import { withFetchPreconnect } from "openclaw/plugin-sdk/test-env";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,7 +16,7 @@ type FeishuStreamingFetch = typeof fetch;
 
 type StreamingSessionState = {
   cardId: string;
-  messageId: string;
+  messageId?: string;
   sequence: number;
   currentText: string;
   sentText: string;
@@ -286,6 +287,154 @@ describe("FeishuStreamingSession", () => {
     } as unknown as ConstructorParameters<typeof FeishuStreamingSession>[0];
     return { authTokens, client, deps };
   }
+
+  function createStartHarness(
+    response: { code: number; msg: string; messageId?: string },
+    rejectCardKitPath?: "content" | "settings",
+  ) {
+    const sendResponse = async () => ({
+      code: response.code,
+      msg: response.msg,
+      data: response.messageId ? { message_id: response.messageId } : {},
+    });
+    const messageCreate = vi.fn(sendResponse);
+    const messageReply = vi.fn(sendResponse);
+    const messageDelete = vi.fn(async () => ({ code: 0, msg: "ok" }));
+    const client = {
+      im: { message: { create: messageCreate, reply: messageReply, delete: messageDelete } },
+    } as unknown as ConstructorParameters<typeof FeishuStreamingSession>[0];
+    const requests: Array<{ path: string; body: string }> = [];
+    const deps = createMemoryFetch((url, body) => {
+      requests.push({ path: url.pathname, body });
+      if (url.pathname.includes("/auth/")) {
+        return jsonResponse({
+          code: 0,
+          msg: "ok",
+          tenant_access_token: "token",
+          expire: 7200,
+        });
+      }
+      if (url.pathname.endsWith("/cardkit/v1/cards")) {
+        return jsonResponse({ code: 0, msg: "ok", data: { card_id: "card_start" } });
+      }
+      if (
+        (rejectCardKitPath === "content" && url.pathname.includes("/elements/content/content")) ||
+        (rejectCardKitPath === "settings" && url.pathname.endsWith("/settings"))
+      ) {
+        return jsonResponse({ code: 19001, msg: `${rejectCardKitPath} rejected` });
+      }
+      return jsonResponse({ code: 0, msg: "ok" });
+    });
+    return { client, deps, messageCreate, messageReply, messageDelete, requests };
+  }
+
+  it.each([
+    { mode: "reply", options: { replyToMessageId: "om_parent" } },
+    { mode: "root-create", options: { rootId: "om_root" } },
+    { mode: "create", options: undefined },
+  ])("classifies fulfilled permanent rejection in $mode mode", async ({ mode, options }) => {
+    const harness = createStartHarness({
+      code: 230099,
+      msg: "card table number over limit",
+    });
+    const session = new FeishuStreamingSession(
+      harness.client,
+      { appId: `app_rejected_${mode}`, appSecret: "secret" },
+      undefined,
+      harness.deps,
+    );
+
+    const error = await session
+      .start("oc_chat", "chat_id", options)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformMessageNotDispatchedError);
+    expect(error).toMatchObject({ retryable: false });
+    expect((error as Error).message).toBe(
+      "Send card failed: card table number over limit (code=230099)",
+    );
+    expect(session.isActive()).toBe(false);
+    expect(harness.messageCreate.mock.calls.length + harness.messageReply.mock.calls.length).toBe(
+      1,
+    );
+  });
+
+  it.each([
+    { mode: "reply", options: { replyToMessageId: "om_parent" } },
+    { mode: "root-create", options: { rootId: "om_root" } },
+    { mode: "create", options: undefined },
+  ])("finalizes an accepted no-identity card in place in $mode mode", async ({ mode, options }) => {
+    const harness = createStartHarness({ code: 0, msg: "ok" });
+    const session = new FeishuStreamingSession(
+      harness.client,
+      { appId: `app_no_id_${mode}`, appSecret: "secret" },
+      undefined,
+      harness.deps,
+    );
+
+    await session.start("oc_chat", "chat_id", options);
+    expect(session.isActive()).toBe(true);
+    const result = await session.closeWithResult("exact final answer");
+
+    expect(result).toEqual({ visibleReplySent: true, content: "exact final answer" });
+    expect(session.isActive()).toBe(false);
+    expect(harness.messageCreate.mock.calls.length + harness.messageReply.mock.calls.length).toBe(
+      1,
+    );
+    expect(
+      harness.requests.filter(({ path }) => path.includes("/elements/content/content")),
+    ).toHaveLength(1);
+    expect(harness.requests.filter(({ path }) => path.endsWith("/settings"))).toHaveLength(1);
+    expect(harness.messageDelete).not.toHaveBeenCalled();
+  });
+
+  it("disposes an accepted no-identity card in place without attempting message deletion", async () => {
+    const harness = createStartHarness({ code: 0, msg: "ok" });
+    const session = new FeishuStreamingSession(
+      harness.client,
+      { appId: "app_no_id_discard", appSecret: "secret" },
+      undefined,
+      harness.deps,
+    );
+
+    await session.start("oc_chat", "chat_id");
+    await session.discard();
+    await session.discard();
+
+    expect(harness.messageDelete).not.toHaveBeenCalled();
+    expect(harness.requests.filter(({ path }) => path.endsWith("/settings"))).toHaveLength(1);
+    expect(session.isActive()).toBe(false);
+  });
+
+  it.each(["content", "settings"] as const)(
+    "reports accepted no-identity custody when %s finalization fails",
+    async (rejectedPath) => {
+      const harness = createStartHarness({ code: 0, msg: "ok" }, rejectedPath);
+      const session = new FeishuStreamingSession(
+        harness.client,
+        { appId: `app_no_id_failed_${rejectedPath}`, appSecret: "secret" },
+        undefined,
+        harness.deps,
+      );
+
+      await session.start("oc_chat", "chat_id");
+      const error = await session
+        .closeWithResult("final answer")
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(FeishuStreamingFinalizationError);
+      expect(error).toMatchObject({
+        result: {
+          visibleReplySent: true,
+          ...(rejectedPath === "settings" ? { content: "final answer" } : {}),
+        },
+      });
+      expect((error as FeishuStreamingFinalizationError).result.messageId).toBeUndefined();
+      expect(harness.messageDelete).not.toHaveBeenCalled();
+      expect(harness.requests.filter(({ path }) => path.endsWith("/settings"))).toHaveLength(1);
+      expect(session.isActive()).toBe(false);
+    },
+  );
 
   it("rejects oversized streaming tenant-token JSON before buffering the full body", async () => {
     let streamState:
@@ -637,7 +786,7 @@ describe("FeishuStreamingSession", () => {
     expect(updateBodies).toHaveLength(0);
     expect(replaceBodies).toHaveLength(0);
 
-    await session.close();
+    await session.closeWithResult();
 
     expect(updateBodies).toHaveLength(0);
     expect(replaceBodies).toHaveLength(1);
@@ -693,8 +842,8 @@ describe("FeishuStreamingSession", () => {
     });
 
     await session.update(next);
-    // close() reports whether any accepted content remains visible, even when the final rewrite fails.
-    await expect(session.close()).resolves.toBe(true);
+    const error = await session.closeWithResult().catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ result: { visibleReplySent: true, content: previous } });
 
     expect(replaceBodies).toHaveLength(1);
     expect(settingsBodies).toHaveLength(1);
@@ -887,7 +1036,7 @@ describe("FeishuStreamingSession", () => {
       lastUpdateTime: 3_000,
     });
 
-    await session.close("final answer");
+    await session.closeWithResult("final answer");
 
     expect(updateBodies).toHaveLength(0);
     expect(replaceBodies).toHaveLength(1);
@@ -955,7 +1104,7 @@ describe("FeishuStreamingSession", () => {
       lastUpdateTime: 3_000,
     });
 
-    await session.close(finalText);
+    await session.closeWithResult(finalText);
 
     expect(settingsBodies).toHaveLength(1);
     const settingsPayload = JSON.parse(settingsBodies[0] ?? "{}") as { settings?: string };
@@ -1005,7 +1154,9 @@ describe("FeishuStreamingSession", () => {
       lastUpdateTime: 3_000,
     });
 
-    await session.close("final answer");
+    await expect(session.closeWithResult("final answer")).rejects.toBeInstanceOf(
+      FeishuStreamingFinalizationError,
+    );
 
     expect(updateBodies).toHaveLength(0);
     expect(replaceBodies).toHaveLength(1);
@@ -1043,7 +1194,9 @@ describe("FeishuStreamingSession", () => {
       lastUpdateTime: 3_000,
     });
 
-    await expect(session.close("final answer")).resolves.toBe(false);
+    await expect(session.closeWithResult("final answer")).rejects.toMatchObject({
+      result: { visibleReplySent: false },
+    });
 
     expect(updateBodies).toHaveLength(1);
     expect(replaceBodies).toHaveLength(0);

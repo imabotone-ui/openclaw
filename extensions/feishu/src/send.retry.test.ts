@@ -5,6 +5,7 @@
  * so no fake timers are needed. Related: issue #70879.
  */
 
+import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
 import { describe, expect, it, vi } from "vitest";
 import { requestFeishuApi } from "./comment-shared.js";
 import {
@@ -124,6 +125,23 @@ describe("requestFeishuApi — retry on rate-limit", () => {
 });
 
 describe("requestFeishuApi — no retry for non-rate-limit errors", () => {
+  it("classifies a structured rejected message response as a permanent non-dispatch", async () => {
+    const rejected = axiosError(230099);
+    rejected.response.data.msg = "card table number over limit";
+    const request = vi.fn().mockRejectedValue(rejected);
+
+    const error = await requestFeishuApi(request, "Feishu card send failed", NO_DELAY).catch(
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toBeInstanceOf(PlatformMessageNotDispatchedError);
+    expect(error).toMatchObject({ retryable: false, cause: rejected });
+    expect((error as Error).message).toBe(
+      "Feishu card send failed: card table number over limit (code=230099)",
+    );
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
   it("throws immediately without retry for a non-rate-limit Feishu code", async () => {
     const request = vi.fn().mockRejectedValue(axiosError(230001));
 
@@ -135,6 +153,22 @@ describe("requestFeishuApi — no retry for non-rate-limit errors", () => {
     const request = vi.fn().mockRejectedValue(new Error("network failure"));
 
     await expect(requestFeishuApi(request, "prefix", NO_DELAY)).rejects.toThrow(/network failure/);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps code-less transport failures ambiguous", async () => {
+    const request = vi.fn().mockRejectedValue(
+      Object.assign(new Error("socket closed"), {
+        response: { status: 502, data: { msg: "gateway unavailable" } },
+      }),
+    );
+
+    const error = await requestFeishuApi(request, "prefix", NO_DELAY).catch(
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(PlatformMessageNotDispatchedError);
     expect(request).toHaveBeenCalledTimes(1);
   });
 });
