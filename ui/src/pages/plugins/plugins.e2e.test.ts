@@ -723,10 +723,24 @@ describeControlUiE2e("Control UI Plugins mocked Gateway E2E", () => {
       expect(await review.textContent()).not.toContain("raw terminal install-policy output");
       await captureScreenshot(page, "09-policy-review-desktop.png");
 
+      await page.setViewportSize(mobileViewport);
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () =>
+              Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) -
+              window.innerWidth,
+          ),
+        )
+        .toBeLessThanOrEqual(1);
+      await review.waitFor({ state: "visible" });
+      await captureScreenshot(page, "09-policy-review-mobile.png");
+
       const installCountBeforeCancel = (await gateway.getRequests("plugins.install")).length;
       await review.getByRole("button", { name: "Cancel", exact: true }).click();
       await review.waitFor({ state: "detached" });
       expect((await gateway.getRequests("plugins.install")).length).toBe(installCountBeforeCancel);
+      await page.setViewportSize(desktopViewport);
 
       const installCountBeforeSecondAttempt = (await gateway.getRequests("plugins.install")).length;
       await gateway.deferNext("plugins.install");
