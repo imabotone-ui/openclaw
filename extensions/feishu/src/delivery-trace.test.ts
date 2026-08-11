@@ -13,15 +13,9 @@ import {
   type DeliveryTraceScenarioName,
   type WireRecorder,
 } from "openclaw/plugin-sdk/channel-contract-testing";
-import {
-  dispatchChannelInboundReply,
-  isChannelPartialDeliveryError,
-} from "openclaw/plugin-sdk/channel-inbound";
-import { setReplyPayloadMetadata } from "openclaw/plugin-sdk/reply-payload-testing";
 import { withFetchPreconnect } from "openclaw/plugin-sdk/test-env";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FeishuConfigSchema } from "./config-schema.js";
-import { sendReplyOrFallbackDirect } from "./send.js";
 import type { ResolvedFeishuAccount } from "./types.js";
 
 const settlePendingFinalDeliveryMock = vi.hoisted(() =>
@@ -37,6 +31,13 @@ vi.mock("../../../src/infra/outbound/delivery-completion.js", async (importOrigi
 type RecordedWireCall = Parameters<WireRecorder["recordWireCall"]>[0];
 type CreateFeishuReplyDispatcher =
   typeof import("./reply-dispatcher.js").createFeishuReplyDispatcher;
+type DispatchChannelInboundReply =
+  typeof import("openclaw/plugin-sdk/channel-inbound").dispatchChannelInboundReply;
+type IsChannelPartialDeliveryError =
+  typeof import("openclaw/plugin-sdk/channel-inbound").isChannelPartialDeliveryError;
+type SendReplyOrFallbackDirect = typeof import("./send.js").sendReplyOrFallbackDirect;
+type SetReplyPayloadMetadata =
+  typeof import("openclaw/plugin-sdk/reply-payload-testing").setReplyPayloadMetadata;
 type StreamingStartBackoffMap =
   typeof import("./reply-dispatcher-state.js").streamingStartBackoffUntilByAccount;
 
@@ -50,7 +51,7 @@ type FeishuTraceState = {
   cardCount: number;
   setupCount: number;
   wireFaults: Array<{ fault: "rate-limit"; retryAfterMs: number }>;
-  messageResult: "identified" | "no-id";
+  messageResult: "identified" | "no-id" | "rejected";
   failNextReplace: boolean;
 };
 
@@ -145,13 +146,21 @@ vi.mock("./streaming-card.js", async (importOriginal) => {
 });
 
 let createFeishuReplyDispatcher: CreateFeishuReplyDispatcher;
+let dispatchChannelInboundReply: DispatchChannelInboundReply;
+let isChannelPartialDeliveryError: IsChannelPartialDeliveryError;
+let sendReplyOrFallbackDirect: SendReplyOrFallbackDirect;
+let setReplyPayloadMetadata: SetReplyPayloadMetadata;
 let streamingStartBackoffUntilByAccount: StreamingStartBackoffMap;
 
 beforeAll(async () => {
   // Collection can share a worker with suites that mock the same Feishu modules.
   // Reload only after this file's hoisted mocks are registered.
   vi.resetModules();
+  ({ dispatchChannelInboundReply, isChannelPartialDeliveryError } =
+    await import("openclaw/plugin-sdk/channel-inbound"));
+  ({ setReplyPayloadMetadata } = await import("openclaw/plugin-sdk/reply-payload-testing"));
   ({ createFeishuReplyDispatcher } = await import("./reply-dispatcher.js"));
+  ({ sendReplyOrFallbackDirect } = await import("./send.js"));
   ({ streamingStartBackoffUntilByAccount } = await import("./reply-dispatcher-state.js"));
 });
 
@@ -195,10 +204,14 @@ function nextMessageId(): string {
 }
 
 function createRecordingLarkClient() {
-  const messageSendResult = (messageId: string) =>
-    traceState.messageResult === "identified"
+  const messageSendResult = (messageId: string) => {
+    if (traceState.messageResult === "rejected") {
+      return { code: 230099, msg: "card table number over limit", data: {} };
+    }
+    return traceState.messageResult === "identified"
       ? { code: 0, msg: "ok", data: { message_id: messageId } }
       : { code: 0, msg: "ok", data: {} };
+  };
   return {
     im: {
       message: {
@@ -554,6 +567,76 @@ describe("feishu producer custody boundaries", () => {
     expect(client.im.message.reply).toHaveBeenCalledOnce();
     expect(client.im.message.create).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { mode: "reply", dispatcherParams: { replyToMessageId: "om-inbound" } },
+    { mode: "root-create", dispatcherParams: { rootId: "om-root" } },
+    { mode: "ordinary-create", dispatcherParams: {} },
+  ])(
+    "keeps a permanent $mode streaming rejection terminal without static replay",
+    async ({ dispatcherParams }) => {
+      const wireCalls: RecordedWireCall[] = [];
+      traceState.recordWireCall = (call) => wireCalls.push(call);
+      traceState.messageCount = 0;
+      traceState.cardCount = 0;
+      traceState.messageResult = "rejected";
+      traceState.account = {
+        ...makeTraceAccount("final-only"),
+        config: FeishuConfigSchema.parse({ renderMode: "card", streaming: { mode: "partial" } }),
+      };
+      traceState.larkClient = createRecordingLarkClient();
+      traceState.cardKitFetch = createRecordingCardKitFetch();
+      const created = createFeishuReplyDispatcher({
+        cfg: {} as never,
+        agentId: "agent",
+        runtime: { log: () => {}, error: () => {} } as never,
+        chatId: "oc-trace-chat",
+        sendTarget: "oc-trace-chat",
+        ...dispatcherParams,
+      });
+      const sourcePayload = setReplyPayloadMetadata(
+        { text: "the final answer" },
+        { pendingFinalDeliveryCompletion: pendingFinalCompletion },
+      );
+
+      const error = await dispatchChannelInboundReply({
+        cfg: {},
+        channel: "feishu",
+        accountId: "main",
+        agentId: "agent",
+        routeSessionKey: pendingFinalCompletion.sessionKey,
+        storePath: pendingFinalCompletion.storePath,
+        ctxPayload: createTraceContext(),
+        recordInboundSession: async () => undefined,
+        dispatchReplyWithBufferedBlockDispatcher: async ({ dispatcherOptions }) => {
+          await dispatcherOptions.deliver?.(sourcePayload, { kind: "final" });
+          return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
+        },
+        dispatcherOptions: created.dispatcherOptions,
+        replyOptions: created.replyOptions,
+        delivery: created.delivery,
+      }).catch((caught: unknown) => caught);
+
+      expect(error).toMatchObject({
+        name: "PlatformMessageNotDispatchedError",
+        retryable: false,
+      });
+      expect(settlePendingFinalDeliveryMock).toHaveBeenNthCalledWith(
+        2,
+        { kind: "pending-final", ...pendingFinalCompletion },
+        "suppressed",
+        ["prepared", "queued", "unknown"],
+      );
+      expect(
+        wireCalls.filter(
+          (call) => call.method === "im.message.reply" || call.method === "im.message.create",
+        ),
+      ).toHaveLength(1);
+      await created.dispatcherOptions.onIdle?.();
+      await created.dispatcherOptions.onIdle?.();
+      expect(streamingStartBackoffUntilByAccount.has("main")).toBe(false);
+    },
+  );
 
   it("retains visible custody when no-ID preview disposition fails", async () => {
     const wireCalls: RecordedWireCall[] = [];

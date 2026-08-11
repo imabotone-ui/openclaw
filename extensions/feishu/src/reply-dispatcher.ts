@@ -12,7 +12,10 @@ import {
   resolveChannelPreviewStreamMode,
   resolveChannelStreamingBlockEnabled,
 } from "openclaw/plugin-sdk/channel-outbound";
-import { toStringifiedError as toFeishuError } from "openclaw/plugin-sdk/error-runtime";
+import {
+  PlatformMessageNotDispatchedError,
+  toStringifiedError as toFeishuError,
+} from "openclaw/plugin-sdk/error-runtime";
 import { getGlobalHookRunner } from "openclaw/plugin-sdk/plugin-runtime";
 import {
   getReplyPayloadTtsSupplement,
@@ -318,6 +321,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   let sentIndependentBlockText = false;
   let partialUpdateQueue: Promise<void> = Promise.resolve();
   let streamingStartPromise: Promise<void> | null = null;
+  let terminalStreamingStartError: PlatformMessageNotDispatchedError | undefined;
   let streamingGeneration = 0;
   let activeStreamingGeneration: number | undefined;
   let inFlightStreamingClose:
@@ -343,6 +347,12 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
 
   const markVisibleReplySent = () => {
     visibleReplySent = true;
+  };
+
+  const throwIfStreamingStartRejected = () => {
+    if (terminalStreamingStartError) {
+      throw terminalStreamingStartError;
+    }
   };
 
   const normalizeStreamingFinalizationFailure = (
@@ -460,6 +470,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       !streamingEnabled ||
       streamingStartPromise ||
       streaming ||
+      terminalStreamingStartError ||
       isStreamingStartBackedOff(account.accountId)
     ) {
       return;
@@ -500,12 +511,21 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         });
         streamingStartBackoffUntilByAccount.delete(account.accountId);
       } catch (error) {
-        rememberStreamingStartFailure(account.accountId);
-        params.runtime.error?.(
-          `feishu[${account.accountId}]: streaming start failed; using non-streaming card fallback for ${
-            STREAMING_START_FAILURE_BACKOFF_MS / 1000
-          }s: ${String(error)}`,
-        );
+        if (error instanceof PlatformMessageNotDispatchedError && !error.retryable) {
+          // A provider-declared no-send is terminal for this logical payload.
+          // Keep the fact until delivery consumes it instead of replaying statically.
+          terminalStreamingStartError = error;
+          params.runtime.error?.(
+            `feishu[${account.accountId}]: streaming start permanently rejected: ${String(error)}`,
+          );
+        } else {
+          rememberStreamingStartFailure(account.accountId);
+          params.runtime.error?.(
+            `feishu[${account.accountId}]: streaming start failed; using non-streaming card fallback for ${
+              STREAMING_START_FAILURE_BACKOFF_MS / 1000
+            }s: ${String(error)}`,
+          );
+        }
         if (streaming === session) {
           streaming = null;
           streamingStartPromise = null;
@@ -518,6 +538,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   const resetStreamingState = () => {
     streaming = null;
     streamingStartPromise = null;
+    terminalStreamingStartError = undefined;
     activeStreamingGeneration = undefined;
     partialUpdateQueue = Promise.resolve();
     streamText = "";
@@ -699,6 +720,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         await streamingStartPromise;
       }
       await partialUpdateQueue;
+      throwIfStreamingStartRejected();
       if (streaming?.isActive()) {
         try {
           await streaming.discard();
@@ -1398,6 +1420,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
           if (streamingStartPromise) {
             await streamingStartPromise;
           }
+          throwIfStreamingStartRejected();
         }
 
         if (info?.kind === "final" && useStreamingCard) {
@@ -1405,6 +1428,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
           if (streamingStartPromise) {
             await streamingStartPromise;
           }
+          throwIfStreamingStartRejected();
         }
 
         const shouldStreamText = info?.kind === "block" || info?.kind === "final";
