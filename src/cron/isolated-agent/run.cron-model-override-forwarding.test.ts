@@ -174,6 +174,7 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
       agentDir: "/tmp/owner-agent",
       workspaceDir: "/tmp/replacement-workspace",
       config: ownerConfig,
+      metadataSnapshot: {} as never,
       modelCatalog: { entries: ownerCatalog, routeVariants: [] },
     });
     ensureAgentWorkspaceMock.mockImplementationOnce(async ({ dir }: { dir: string }) => ({ dir }));
@@ -203,6 +204,7 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
       agentDir: "/tmp/main-agent",
       workspaceDir: "/tmp/main-workspace",
       config: callerConfig,
+      metadataSnapshot: {} as never,
       modelCatalog: { entries: [], routeVariants: [] },
     });
 

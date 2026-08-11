@@ -6,6 +6,7 @@ import type { GatewayRequestContext } from "./types.js";
 
 const getCurrentPluginMetadataSnapshotMock = vi.hoisted(() => vi.fn());
 const loadPluginRegistrySnapshotWithMetadataMock = vi.hoisted(() => vi.fn());
+const resolveManifestProviderAuthChoicesMock = vi.hoisted(() => vi.fn(() => []));
 
 vi.mock("../../plugins/current-plugin-metadata-snapshot.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../plugins/current-plugin-metadata-snapshot.js")>()),
@@ -15,6 +16,11 @@ vi.mock("../../plugins/current-plugin-metadata-snapshot.js", async (importOrigin
 vi.mock("../../plugins/plugin-registry.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../plugins/plugin-registry.js")>()),
   loadPluginRegistrySnapshotWithMetadata: loadPluginRegistrySnapshotWithMetadataMock,
+}));
+
+vi.mock("../../plugins/provider-auth-choices.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../plugins/provider-auth-choices.js")>()),
+  resolveManifestProviderAuthChoices: resolveManifestProviderAuthChoicesMock,
 }));
 
 import {
@@ -56,6 +62,12 @@ describe("models.list plugin metadata handoff", () => {
   beforeEach(() => {
     getCurrentPluginMetadataSnapshotMock.mockReset();
     loadPluginRegistrySnapshotWithMetadataMock.mockReset();
+    loadPluginRegistrySnapshotWithMetadataMock.mockReturnValue({
+      source: "derived",
+      snapshot: { plugins: [] },
+    });
+    resolveManifestProviderAuthChoicesMock.mockReset();
+    resolveManifestProviderAuthChoicesMock.mockReturnValue([]);
   });
 
   it("reuses one Gateway-owned metadata snapshot across startup projection and browse", async () => {
@@ -82,11 +94,12 @@ describe("models.list plugin metadata handoff", () => {
           entries: [catalogEntry("modern"), catalogEntry("another")],
           routeVariants: [],
         };
-        getCurrentPluginMetadataSnapshotMock.mockReturnValue(preparedMetadataSnapshot());
+        const metadataSnapshot = preparedMetadataSnapshot();
         const projector = createGatewayAgentModelCatalogProjector({
           cfg,
           agentId: "main",
           snapshot,
+          metadataSnapshot,
         });
         await projector.projectCatalog();
 
@@ -104,20 +117,17 @@ describe("models.list plugin metadata handoff", () => {
           catalogProjector: projector,
         });
 
-        expect(getCurrentPluginMetadataSnapshotMock).toHaveBeenCalledWith({
-          config: cfg,
-          allowWorkspaceScopedSnapshot: true,
-        });
+        expect(getCurrentPluginMetadataSnapshotMock).not.toHaveBeenCalled();
         expect(loadPluginRegistrySnapshotWithMetadataMock).not.toHaveBeenCalled();
       },
     );
   });
 
-  it("preserves registry fallback when no compatible Gateway snapshot exists", async () => {
+  it("uses the catalog owner's metadata snapshot for an explicit Gateway browse", async () => {
     await withOpenClawTestState(
       {
         layout: "state-only",
-        prefix: "openclaw-models-list-plugin-runtime-fallback-",
+        prefix: "openclaw-models-list-plugin-runtime-explicit-",
         agentEnv: "main",
       },
       async (state) => {
@@ -130,27 +140,32 @@ describe("models.list plugin metadata handoff", () => {
             },
           },
         } as OpenClawConfig;
-        getCurrentPluginMetadataSnapshotMock.mockReturnValue(undefined);
-        loadPluginRegistrySnapshotWithMetadataMock.mockReturnValue({
-          source: "provided",
-          snapshot: {
-            plugins: [
-              {
-                enabled: true,
-                syntheticAuthRefs: ["custom"],
-              },
-            ],
-          },
-        });
-        const projector = createGatewayAgentModelCatalogProjector({
-          cfg,
+        const metadataSnapshot = preparedMetadataSnapshot();
+        const context = {
+          getRuntimeConfig: () => cfg,
+          loadGatewayModelCatalogSnapshot: vi.fn(async () => ({
+            agentId: "main",
+            agentDir: state.agentDir,
+            workspaceDir: state.workspaceDir,
+            config: cfg,
+            entries: [catalogEntry("modern")],
+            routeVariants: [],
+            metadataSnapshot,
+          })),
+          logGateway: { debug: vi.fn() },
+        } as unknown as GatewayRequestContext;
+
+        await buildModelsListResult({
+          context,
           agentId: "main",
-          snapshot: { entries: [catalogEntry("modern")], routeVariants: [] },
+          params: { view: "configured", includeProviderCapabilities: true },
         });
 
-        await projector.projectCatalog();
-
-        expect(loadPluginRegistrySnapshotWithMetadataMock).toHaveBeenCalled();
+        expect(getCurrentPluginMetadataSnapshotMock).not.toHaveBeenCalled();
+        expect(loadPluginRegistrySnapshotWithMetadataMock).not.toHaveBeenCalled();
+        expect(resolveManifestProviderAuthChoicesMock).toHaveBeenCalledWith(
+          expect.objectContaining({ metadataSnapshot }),
+        );
       },
     );
   });

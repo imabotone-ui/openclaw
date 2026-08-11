@@ -181,6 +181,7 @@ describe("cron model formatting and precedence edge cases", () => {
         agentDir: params.agentDir,
         workspaceDir: params.workspaceDir,
         config: params.config,
+        metadataSnapshot: {} as never,
         modelCatalog: { entries: [], routeVariants: [] },
       }),
     );
@@ -367,6 +368,7 @@ describe("cron model formatting and precedence edge cases", () => {
         agentDir: "/tmp/owner-agent",
         workspaceDir: "/tmp/owner-workspace",
         config: ownerConfig,
+        metadataSnapshot: {} as never,
         modelCatalog: { entries: ownerCatalog, routeVariants: [] },
       });
 

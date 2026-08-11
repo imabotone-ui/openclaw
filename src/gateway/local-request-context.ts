@@ -129,6 +129,7 @@ function createLocalGatewayRequestContext(
         agentDir: owner.agentDir,
         workspaceDir: owner.workspaceDir,
         config: owner.config,
+        metadataSnapshot: owner.metadataSnapshot,
       };
     },
     readPreparedGatewayModelCatalog: async (loadParams) =>

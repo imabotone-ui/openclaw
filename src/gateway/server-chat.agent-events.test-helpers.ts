@@ -77,6 +77,7 @@ export function createDirectChatContext(
       agentId: "main",
       agentDir: "/tmp/chat-model-catalog-agent",
       config,
+      metadataSnapshot: {} as never,
       entries: [],
       routeVariants: [],
     }),

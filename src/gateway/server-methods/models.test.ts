@@ -11,6 +11,7 @@ import {
 } from "../../agents/auth-profiles.js";
 import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { loadPluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.js";
 import { withEnvAsync } from "../../test-utils/env.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { modelsHandlers } from "./models.js";
@@ -96,8 +97,21 @@ function requestModelsList(params: {
           agentId: loadParams?.agentId ?? resolveDefaultAgentId(config),
           agentDir: "/tmp/models-list-agent",
           config,
+          metadataSnapshot: loadPluginMetadataSnapshot({ config }),
           entries,
           routeVariants: entries,
+        };
+      },
+      readPreparedGatewayModelCatalogSnapshot: async (loadParams) => {
+        const config = getRuntimeConfig();
+        return {
+          agentId: loadParams?.agentId ?? resolveDefaultAgentId(config),
+          agentDir: "/tmp/models-list-agent",
+          workspaceDir: "/tmp/models-list-workspace",
+          config,
+          metadataSnapshot: loadPluginMetadataSnapshot({ config }),
+          entries: [],
+          routeVariants: [],
         };
       },
       logGateway: {

@@ -3557,6 +3557,7 @@ describe("resolveGatewayModelSupportsImages", () => {
     agentDir: "/tmp/gateway-model-capability-agent",
     workspaceDir: "/tmp/gateway-model-capability-workspace",
     config: params.config ?? {},
+    metadataSnapshot: {} as never,
     entries: params.entries ?? [],
     routeVariants: [],
     ...(params.staticEntries ? { staticEntries: params.staticEntries } : {}),

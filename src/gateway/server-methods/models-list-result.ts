@@ -50,7 +50,6 @@ import { resolveProviderIdForAuth } from "../../agents/provider-auth-aliases.js"
 import { resolveDefaultAgentWorkspaceDir } from "../../agents/workspace.js";
 import { getRuntimeConfigSourceSnapshot } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { getCurrentPluginMetadataSnapshot } from "../../plugins/current-plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
 import { resolveManifestProviderAuthChoices } from "../../plugins/provider-auth-choices.js";
 import type { ProviderCatalogOutcome } from "../../plugins/provider-catalog.types.js";
@@ -130,6 +129,7 @@ function resolveLegacyEntryAvailability(params: {
   primaryAvailability: ModelsListAvailability;
   cfg: OpenClawConfig;
   agentId: string;
+  metadataSnapshot: PluginMetadataSnapshot;
 }): ModelsListAvailability {
   if (params.primaryAvailability === true) {
     return true;
@@ -140,6 +140,7 @@ function resolveLegacyEntryAvailability(params: {
     cfg: params.cfg,
     agentId: params.agentId,
     modelId: params.entry.id,
+    metadataSnapshot: params.metadataSnapshot,
   });
   if (
     runtimeProvider &&
@@ -160,6 +161,7 @@ function createModelsListEntryEvaluator(params: {
   cfg: OpenClawConfig;
   agentId: string;
   authResolver: ModelAuthAvailabilityResolver;
+  metadataSnapshot: PluginMetadataSnapshot;
   providerOutcomes?: readonly ProviderCatalogOutcome[];
   preferredProfileId?: string;
   lockedProfileId?: string;
@@ -195,6 +197,7 @@ function createModelsListEntryEvaluator(params: {
                 primaryAvailability: evaluation.availability,
                 cfg: params.cfg,
                 agentId: params.agentId,
+                metadataSnapshot: params.metadataSnapshot,
               }),
             }
           : evaluation;
@@ -297,7 +300,7 @@ export function createGatewayAgentModelCatalogProjector(params: {
   cfg: OpenClawConfig;
   agentId: string;
   snapshot: ModelCatalogSnapshot;
-  metadataSnapshot?: PluginMetadataSnapshot;
+  metadataSnapshot: PluginMetadataSnapshot;
   preparedAuthStore?: AuthProfileStore;
   preparedRuntimeAuthModes?: PreparedAgentCredentialModes;
   preparedRuntimeAuthMaterializations?: readonly RuntimeAuthMaterialization[];
@@ -308,12 +311,7 @@ export function createGatewayAgentModelCatalogProjector(params: {
   const defaultModel = resolveAgentEffectiveModelPrimary(params.cfg, params.agentId);
   // The Gateway owns one process-lifecycle plugin metadata snapshot. Carry it
   // through the whole projection so per-model normalization cannot rediscover it.
-  const metadataSnapshot =
-    params.metadataSnapshot ??
-    getCurrentPluginMetadataSnapshot({
-      config: params.cfg,
-      allowWorkspaceScopedSnapshot: true,
-    });
+  const metadataSnapshot = params.metadataSnapshot;
   const visibilityPolicy = createModelVisibilityPolicy({
     cfg: params.cfg,
     catalog: params.snapshot.entries,
@@ -364,6 +362,7 @@ export function createGatewayAgentModelCatalogProjector(params: {
     cfg: params.cfg,
     agentId: params.agentId,
     authResolver,
+    metadataSnapshot,
     providerOutcomes: params.snapshot.providerOutcomes,
     ...(params.preferredProfileId ? { preferredProfileId: params.preferredProfileId } : {}),
     ...(params.lockedProfileId ? { lockedProfileId: params.lockedProfileId } : {}),
@@ -470,6 +469,7 @@ async function buildPublicModelsListEntries(params: {
 
 function apiKeyProviderCapabilities(params: {
   cfg: OpenClawConfig;
+  metadataSnapshot: PluginMetadataSnapshot;
   workspaceDir: string;
 }): ApiKeyProviderCapabilities {
   const capabilities = new Map<string, boolean>();
@@ -479,12 +479,14 @@ function apiKeyProviderCapabilities(params: {
       workspaceDir: params.workspaceDir,
       env: process.env,
       includeUntrustedWorkspacePlugins: false,
+      metadataSnapshot: params.metadataSnapshot,
     });
   for (const choice of resolveManifestProviderAuthChoices({
     config: params.cfg,
     workspaceDir: params.workspaceDir,
     env: process.env,
     includeUntrustedWorkspacePlugins: false,
+    metadataSnapshot: params.metadataSnapshot,
   })) {
     const provider = resolveProvider(choice.providerId);
     capabilities.set(
@@ -522,6 +524,10 @@ export async function buildModelsListResult(
     params.preloadedCatalog.config === initialConfig
       ? params.preloadedCatalog
       : undefined;
+  const preparedOwnerSnapshot =
+    preloadedCatalog && params.catalogProjector
+      ? undefined
+      : await params.context.readPreparedGatewayModelCatalogSnapshot?.({ agentId: initialAgentId });
   let loadedSnapshot:
     | Awaited<ReturnType<GatewayRequestContext["loadGatewayModelCatalogSnapshot"]>>
     | undefined;
@@ -606,10 +612,11 @@ export async function buildModelsListResult(
   ) {
     return { models: [] };
   }
-  const cfg = loadedSnapshot?.config ?? initialConfig;
-  const agentId = loadedSnapshot?.agentId ?? initialAgentId;
+  const ownerSnapshot = loadedSnapshot ?? preparedOwnerSnapshot;
+  const cfg = ownerSnapshot?.config ?? initialConfig;
+  const agentId = ownerSnapshot?.agentId ?? initialAgentId;
   const workspaceDir =
-    loadedSnapshot?.workspaceDir ??
+    ownerSnapshot?.workspaceDir ??
     resolveAgentWorkspaceDir(cfg, agentId) ??
     resolveDefaultAgentWorkspaceDir();
   const catalog = snapshot.entries;
@@ -617,14 +624,14 @@ export async function buildModelsListResult(
   const providerOutcomes = snapshot.providerOutcomes;
   const outcomeProjection = providerOutcomes?.length ? { providerOutcomes } : {};
   const metadataSnapshot =
-    (usedPreloadedCatalog ? params.catalogProjector?.metadataSnapshot : undefined) ??
-    getCurrentPluginMetadataSnapshot({
-      config: cfg,
-      allowWorkspaceScopedSnapshot: true,
-    });
+    ownerSnapshot?.metadataSnapshot ??
+    (usedPreloadedCatalog ? params.catalogProjector?.metadataSnapshot : undefined);
+  if (!metadataSnapshot) {
+    throw new Error("Gateway model catalog owner omitted its plugin metadata snapshot");
+  }
   const includeProviderCapabilities = params.params.includeProviderCapabilities === true;
   const capableProviders = includeProviderCapabilities
-    ? apiKeyProviderCapabilities({ cfg, workspaceDir })
+    ? apiKeyProviderCapabilities({ cfg, metadataSnapshot, workspaceDir })
     : undefined;
   if (view === "provider-config") {
     const sourceConfig = getRuntimeConfigSourceSnapshot() ?? cfg;
@@ -648,6 +655,7 @@ export async function buildModelsListResult(
       cfg,
       agentId,
       snapshot: inventorySnapshot,
+      metadataSnapshot,
       ...(params.routeResolverFactory ? { routeResolverFactory: params.routeResolverFactory } : {}),
     });
     const inventory = await inventoryProjector.projectCatalog();
@@ -689,6 +697,7 @@ export async function buildModelsListResult(
         workspaceDir,
         routeResolverFactory: params.routeResolverFactory,
       }),
+      metadataSnapshot,
       providerOutcomes,
     });
   const models = await resolveLogicalVisibleModelCatalog({

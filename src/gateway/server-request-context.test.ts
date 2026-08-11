@@ -52,6 +52,7 @@ function makeContextParams(
       agentDir: "/tmp/model-catalog-agent",
       workspaceDir: "/tmp/model-catalog-workspace",
       config,
+      metadataSnapshot: {} as never,
       entries: [],
       routeVariants: [],
     })),

@@ -8,6 +8,7 @@ import {
   catalogEntry,
   listModels,
   providerCatalogEntry,
+  testMetadataSnapshot,
   WITHOUT_OPENAI_ENV_AUTH,
 } from "./models-list-result.openai-routes.test-support.js";
 import type { GatewayRequestContext } from "./types.js";
@@ -27,6 +28,7 @@ describe("models.list OpenAI routes", () => {
       Promise.resolve({
         agentDir: "/tmp/models-list-openai-agent",
         config,
+        metadataSnapshot: testMetadataSnapshot(config),
         entries: [],
         routeVariants: [],
       }),
@@ -60,6 +62,7 @@ describe("models.list OpenAI routes", () => {
       Promise.resolve({
         agentDir: "/tmp/models-list-openai-agent",
         config,
+        metadataSnapshot: testMetadataSnapshot(config),
         entries: [],
         routeVariants: [],
       }),
@@ -91,6 +94,7 @@ describe("models.list OpenAI routes", () => {
       Promise.resolve({
         agentDir: "/tmp/models-list-openai-agent",
         config: replacementConfig,
+        metadataSnapshot: testMetadataSnapshot(replacementConfig),
         entries: [],
         routeVariants: [],
       }),
@@ -127,6 +131,15 @@ describe("models.list OpenAI routes", () => {
     const context = {
       getRuntimeConfig: () => config,
       loadGatewayModelCatalogSnapshot,
+      readPreparedGatewayModelCatalogSnapshot: vi.fn(async () => ({
+        agentId: "main",
+        agentDir: "/tmp/models-list-openai-agent",
+        workspaceDir: "/tmp/models-list-openai-workspace",
+        config,
+        metadataSnapshot: testMetadataSnapshot(config),
+        entries: [],
+        routeVariants: [],
+      })),
       logGateway: { debug: vi.fn() },
     } as unknown as GatewayRequestContext;
 
@@ -170,6 +183,7 @@ describe("models.list OpenAI routes", () => {
           agentId: "main",
           agentDir: "/tmp/models-list-openai-agent",
           config,
+          metadataSnapshot: testMetadataSnapshot(config),
           entries: [ownerEntry],
           routeVariants: [ownerEntry],
         }),
@@ -215,6 +229,7 @@ describe("models.list OpenAI routes", () => {
         agentDir: "/tmp/models-list-main-agent",
         workspaceDir: "/tmp/models-list-main-workspace",
         config: replacementConfig,
+        metadataSnapshot: testMetadataSnapshot(replacementConfig),
         entries: [entry],
         routeVariants: [entry],
       })
@@ -223,6 +238,7 @@ describe("models.list OpenAI routes", () => {
         agentDir: "/tmp/models-list-main-agent",
         workspaceDir: "/tmp/models-list-main-workspace",
         config: replacementConfig,
+        metadataSnapshot: testMetadataSnapshot(replacementConfig),
         entries: [entry],
         routeVariants: [entry],
       });
@@ -258,6 +274,7 @@ describe("models.list OpenAI routes", () => {
         agentDir: "/tmp/models-list-main-agent",
         workspaceDir: "/tmp/models-list-main-workspace",
         config: replacementConfig,
+        metadataSnapshot: testMetadataSnapshot(replacementConfig),
         entries: [entry],
         routeVariants: [entry],
       })
@@ -266,6 +283,7 @@ describe("models.list OpenAI routes", () => {
         agentDir: "/tmp/models-list-worker-agent",
         workspaceDir: "/tmp/models-list-worker-workspace",
         config: replacementConfig,
+        metadataSnapshot: testMetadataSnapshot(replacementConfig),
         entries: [entry],
         routeVariants: [entry],
       });
@@ -291,6 +309,7 @@ describe("models.list OpenAI routes", () => {
           agentDir: "/tmp/models-list-openai-agent",
           workspaceDir: "/tmp/models-list-openai-workspace",
           config,
+          metadataSnapshot: testMetadataSnapshot(config),
           entries: [],
           routeVariants: [],
         }),
@@ -330,6 +349,7 @@ describe("models.list OpenAI routes", () => {
         Promise.resolve({
           agentDir: "/tmp/models-list-openai-agent",
           config,
+          metadataSnapshot: testMetadataSnapshot(config),
           entries: [ownerlessEntry],
           routeVariants: [ownerlessEntry],
         }),
@@ -361,6 +381,7 @@ describe("models.list OpenAI routes", () => {
           agentId: "main",
           agentDir: "/tmp/models-list-main-agent",
           config,
+          metadataSnapshot: testMetadataSnapshot(config),
           entries: [mainEntry],
           routeVariants: [mainEntry],
         }),
@@ -398,6 +419,7 @@ describe("models.list OpenAI routes", () => {
           agentId: "worker",
           agentDir: "/tmp/models-list-worker-agent",
           config,
+          metadataSnapshot: testMetadataSnapshot(config),
           entries: [workerEntry],
           routeVariants: [workerEntry],
         }),

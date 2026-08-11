@@ -19,6 +19,7 @@ const owner = {
   agentDir: "/tmp/cron-agent",
   workspaceDir: "/tmp/cron-workspace",
   config: {},
+  metadataSnapshot: {} as never,
   modelCatalog: { entries: [], routeVariants: [] },
 } as never;
 

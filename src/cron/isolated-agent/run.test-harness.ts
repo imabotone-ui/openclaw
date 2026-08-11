@@ -594,6 +594,7 @@ function resetRunConfigMocks(): void {
         agentDir: params.agentDir ?? "/tmp/agent-dir",
         workspaceDir: params.workspaceDir ?? resolveAgentWorkspaceDirMock(params.config, agentId),
         config: params.config,
+        metadataSnapshot: {} as never,
         modelCatalog: {
           entries: await loadModelCatalogMock(params),
           routeVariants: [],

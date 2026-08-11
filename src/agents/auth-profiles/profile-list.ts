@@ -4,7 +4,10 @@
  * ordering, repair, and profile mutation paths.
  */
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
-import { resolveProviderIdForAuth } from "../provider-auth-aliases.js";
+import {
+  type ProviderAuthAliasLookupParams,
+  resolveProviderIdForAuth,
+} from "../provider-auth-aliases.js";
 import type { AuthProfileStore } from "./types.js";
 
 /** Deduplicates profile ids while preserving first-seen order. */
@@ -13,10 +16,16 @@ export function dedupeProfileIds(profileIds: string[]): string[] {
 }
 
 /** Lists auth profile ids whose credential provider matches the requested provider. */
-export function listProfilesForProvider(store: AuthProfileStore, provider: string): string[] {
-  const providerKey = resolveProviderIdForAuth(provider);
+export function listProfilesForProvider(
+  store: AuthProfileStore,
+  provider: string,
+  aliasLookupParams?: ProviderAuthAliasLookupParams,
+): string[] {
+  const providerKey = resolveProviderIdForAuth(provider, aliasLookupParams);
   return Object.entries(store.profiles)
-    .filter(([, cred]) => resolveProviderIdForAuth(cred.provider) === providerKey)
+    .filter(
+      ([, cred]) => resolveProviderIdForAuth(cred.provider, aliasLookupParams) === providerKey,
+    )
     .map(([id]) => id);
 }
 

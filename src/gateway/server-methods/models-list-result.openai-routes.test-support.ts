@@ -1,6 +1,7 @@
 import type { ModelCatalogEntry } from "../../agents/model-catalog.types.js";
 import type { createOpenAIModelRoutesResolver } from "../../agents/openai-model-routes.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { loadPluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.js";
 import { buildModelsListResult } from "./models-list-result.js";
 import type { GatewayRequestContext } from "./types.js";
 
@@ -21,6 +22,10 @@ export function providerCatalogEntry(provider: string, id: string): ModelCatalog
   return { ...catalogEntry(id, "openai-completions"), provider };
 }
 
+export function testMetadataSnapshot(config: OpenClawConfig) {
+  return loadPluginMetadataSnapshot({ config });
+}
+
 export async function listModels(params: {
   catalog: ModelCatalogEntry[];
   cfg?: OpenClawConfig;
@@ -29,12 +34,14 @@ export async function listModels(params: {
   view?: "all" | "configured" | "provider-config" | "default";
 }) {
   const config = params.cfg ?? ({} as OpenClawConfig);
+  const metadataSnapshot = testMetadataSnapshot(config);
   const context = {
     getRuntimeConfig: () => config,
     loadGatewayModelCatalogSnapshot: async () => ({
       agentId: "main",
       agentDir: "/tmp/models-list-openai-agent",
       config,
+      metadataSnapshot,
       entries: params.catalog,
       routeVariants: params.catalog,
     }),
@@ -52,6 +59,7 @@ export async function listModels(params: {
           },
           catalogProjector: {
             metadataSnapshot: {
+              ...metadataSnapshot,
               plugins: [
                 { id: "test-provider", modelCatalog: { discovery: params.discoveryModes } },
               ],

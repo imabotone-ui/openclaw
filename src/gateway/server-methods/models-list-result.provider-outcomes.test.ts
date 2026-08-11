@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { loadPluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.js";
 import {
   buildModelsListResult,
   createGatewayAgentModelCatalogProjector,
@@ -9,10 +10,12 @@ import type { GatewayRequestContext } from "./types.js";
 describe("models.list provider catalog outcomes", () => {
   it("preserves an auth rejection when no usable models are visible", async () => {
     const config = {} as OpenClawConfig;
+    const metadataSnapshot = loadPluginMetadataSnapshot({ config });
     const snapshot = {
       agentId: "main",
       agentDir: "/tmp/models-list-provider-outcomes-agent",
       config,
+      metadataSnapshot,
       entries: [],
       routeVariants: [],
       providerOutcomes: [
@@ -46,6 +49,7 @@ describe("models.list provider catalog outcomes", () => {
         },
       },
     } as OpenClawConfig;
+    const metadataSnapshot = loadPluginMetadataSnapshot({ config });
     const model = {
       id: "gpt-5.6-sol",
       name: "GPT-5.6 Sol",
@@ -68,6 +72,7 @@ describe("models.list provider catalog outcomes", () => {
       cfg: config,
       agentId: "main",
       snapshot,
+      metadataSnapshot,
       preparedAuthStore: {
         version: 1,
         profiles: {
@@ -121,6 +126,7 @@ describe("models.list provider catalog outcomes", () => {
         },
       },
     } as OpenClawConfig;
+    const metadataSnapshot = loadPluginMetadataSnapshot({ config });
     const model = {
       id: "gpt-5.6-sol",
       name: "GPT-5.6 Sol",
@@ -143,6 +149,7 @@ describe("models.list provider catalog outcomes", () => {
       cfg: config,
       agentId: "main",
       snapshot,
+      metadataSnapshot,
       preferredProfileId: "openai:accepted",
       preparedAuthStore: {
         version: 1,

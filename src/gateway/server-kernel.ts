@@ -16,6 +16,8 @@ type LoadGatewayModelCatalogSnapshot =
   typeof import("./server-model-catalog.js").loadGatewayModelCatalogSnapshot;
 type ReadPreparedGatewayModelCatalog =
   typeof import("./server-model-catalog.js").readPreparedGatewayModelCatalog;
+type ReadPreparedGatewayModelCatalogSnapshot =
+  typeof import("./server-model-catalog.js").readPreparedGatewayModelCatalogSnapshot;
 
 const loadGatewayModelCatalogModule = createLazyRuntimeModule(
   () => import("./server-model-catalog.js"),
@@ -75,6 +77,12 @@ const loadGatewayModelCatalogSnapshot: LoadGatewayModelCatalogSnapshot = async (
 const readPreparedGatewayModelCatalog: ReadPreparedGatewayModelCatalog = async (...args) => {
   const mod = await loadGatewayModelCatalogModule();
   return mod.readPreparedGatewayModelCatalog(...args);
+};
+const readPreparedGatewayModelCatalogSnapshot: ReadPreparedGatewayModelCatalogSnapshot = async (
+  ...args
+) => {
+  const mod = await loadGatewayModelCatalogModule();
+  return mod.readPreparedGatewayModelCatalogSnapshot(...args);
 };
 
 function formatRuntimeGatewayAuthTokenWarning(): string {
@@ -155,6 +163,7 @@ export async function createGatewayKernel(port = 18789, opts: GatewayServerOptio
       loadGatewayPluginBootstrapModule,
       loadGatewayModelCatalog,
       loadGatewayModelCatalogSnapshot,
+      readPreparedGatewayModelCatalogSnapshot,
       readPreparedGatewayModelCatalog,
     });
     return await prepareGatewayKernelRequestRuntime({ coreRuntime, log, logHealth });

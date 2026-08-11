@@ -16,27 +16,11 @@ import {
 import { createOpenAIModelRoutesResolver } from "../../agents/openai-model-routes.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
-import { loadPluginRegistrySnapshotWithMetadata } from "../../plugins/plugin-registry.js";
 
-function listEnabledSyntheticAuthProviderRefs(params: {
-  cfg: OpenClawConfig;
-  metadataSnapshot?: PluginMetadataSnapshot;
-  workspaceDir: string;
-}): readonly string[] {
-  if (params.metadataSnapshot) {
-    return params.metadataSnapshot.index.plugins
-      .filter((plugin) => plugin.enabled)
-      .flatMap((plugin) => plugin.syntheticAuthRefs ?? []);
-  }
-  const result = loadPluginRegistrySnapshotWithMetadata({
-    config: params.cfg,
-    workspaceDir: params.workspaceDir,
-    env: process.env,
-  });
-  if (result.source !== "persisted" && result.source !== "provided") {
-    return [];
-  }
-  return result.snapshot.plugins
+function listEnabledSyntheticAuthProviderRefs(
+  metadataSnapshot: PluginMetadataSnapshot,
+): readonly string[] {
+  return metadataSnapshot.index.plugins
     .filter((plugin) => plugin.enabled)
     .flatMap((plugin) => plugin.syntheticAuthRefs ?? []);
 }
@@ -45,7 +29,7 @@ export function createModelsListAuthResolver(params: {
   cfg: OpenClawConfig;
   agentId: string;
   includeOpenAIExternalProfiles: boolean;
-  metadataSnapshot?: PluginMetadataSnapshot;
+  metadataSnapshot: PluginMetadataSnapshot;
   preparedAuthStore?: AuthProfileStore;
   preparedRuntimeAuthModes?: PreparedAgentCredentialModes;
   preparedRuntimeAuthMaterializations?: readonly RuntimeAuthMaterialization[];
@@ -83,7 +67,7 @@ export function createModelsListAuthResolver(params: {
     preparedRuntimeAuthModes: params.preparedRuntimeAuthModes,
     preparedRuntimeAuthMaterializations: params.preparedRuntimeAuthMaterializations,
     skipSetupProviderFallback: true,
-    syntheticAuthProviderRefs: listEnabledSyntheticAuthProviderRefs(params),
+    syntheticAuthProviderRefs: listEnabledSyntheticAuthProviderRefs(params.metadataSnapshot),
     externalCliProviderIds,
     ...(preparedRuntimeAuthStore ? { preparedRuntimeAuthStore } : {}),
     routeResolverFactory: params.routeResolverFactory,

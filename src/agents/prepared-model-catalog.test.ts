@@ -69,10 +69,12 @@ import { PreparedModelRuntimeOwnerNotPublishedError } from "./prepared-model-run
 
 const fullSnapshot = {
   config: mocks.config,
+  metadataSnapshot: {} as never,
   modelCatalog: { entries: [{ provider: "test", id: "full", name: "Full" }], routeVariants: [] },
 };
 const readOnlySnapshot = {
   config: mocks.config,
+  metadataSnapshot: {} as never,
   modelCatalog: {
     entries: [{ provider: "test", id: "read-only", name: "Read only" }],
     routeVariants: [],
@@ -291,6 +293,7 @@ describe("prepared model catalog access", () => {
       agentDir: "/tmp/prepared-model-catalog-agent",
       workspaceDir: "/tmp/prepared-model-catalog-workspace",
       config: committedSnapshot.config,
+      metadataSnapshot: committedSnapshot.metadataSnapshot,
       modelCatalog: committedSnapshot.modelCatalog,
     });
   });

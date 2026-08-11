@@ -41,6 +41,7 @@ vi.mock("../agents/prepared-model-catalog.js", async () => {
           agentDir: params.agentDir ?? resolveAgentDir(config, agentId),
           workspaceDir: params.workspaceDir ?? resolveAgentWorkspaceDir(config, agentId),
           config,
+          metadataSnapshot: {} as never,
           modelCatalog: {
             entries: (await loadPreparedModelCatalog(params)) ?? [],
             routeVariants: [],

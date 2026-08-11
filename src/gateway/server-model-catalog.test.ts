@@ -1,9 +1,18 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelCatalogSnapshot } from "../agents/model-catalog.types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+
+const getPublishedPreparedModelCatalogOwnerSnapshotMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../agents/prepared-model-catalog.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../agents/prepared-model-catalog.js")>()),
+  getPublishedPreparedModelCatalogOwnerSnapshot: getPublishedPreparedModelCatalogOwnerSnapshotMock,
+}));
+
 import {
   loadGatewayModelCatalog,
   loadGatewayModelCatalogSnapshot,
+  readPreparedGatewayModelCatalogSnapshot,
   type GatewayModelCatalogSnapshot,
 } from "./server-model-catalog.js";
 
@@ -11,6 +20,7 @@ const snapshot: ModelCatalogSnapshot = {
   entries: [{ provider: "openai", id: "gpt-5.5", name: "GPT-5.5" }],
   routeVariants: [],
 };
+const metadataSnapshot = { plugins: [] } as never;
 
 function ownerConfig(agentId = "main", extra: OpenClawConfig = {}): OpenClawConfig {
   return {
@@ -38,11 +48,30 @@ function ownerSnapshot(
     ...(agentId ? { agentId } : {}),
     agentDir: "/tmp/gateway-agent",
     config,
+    metadataSnapshot,
     modelCatalog,
   };
 }
 
 describe("gateway prepared model catalog", () => {
+  beforeEach(() => {
+    getPublishedPreparedModelCatalogOwnerSnapshotMock.mockReset();
+  });
+
+  it("reads the published owner metadata without materializing discovery", async () => {
+    const config = ownerConfig();
+    getPublishedPreparedModelCatalogOwnerSnapshotMock.mockReturnValue(ownerSnapshot(config));
+
+    await expect(
+      readPreparedGatewayModelCatalogSnapshot({ getConfig: () => config }),
+    ).resolves.toMatchObject({
+      config,
+      entries: snapshot.entries,
+      metadataSnapshot,
+    });
+    expect(getPublishedPreparedModelCatalogOwnerSnapshotMock).toHaveBeenCalledWith({ config });
+  });
+
   it("reads the published read-only generation directly", async () => {
     const config = ownerConfig();
     const loadPublishedPreparedModelCatalogOwnerSnapshot = vi.fn(async () => ownerSnapshot(config));
@@ -78,6 +107,7 @@ describe("gateway prepared model catalog", () => {
       agentId: "worker",
       agentDir: "/tmp/gateway-agent",
       config,
+      metadataSnapshot,
       workspaceDir: "/tmp/gateway-workspace",
     } satisfies Partial<GatewayModelCatalogSnapshot>);
 

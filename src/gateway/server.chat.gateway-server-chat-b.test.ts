@@ -107,6 +107,7 @@ function createChatVisionModelCatalogSnapshot(): Awaited<
     agentDir: "/tmp/chat-attachment-vision-agent",
     workspaceDir: "/tmp/chat-attachment-vision-workspace",
     config: {},
+    metadataSnapshot: {} as never,
     entries: [
       {
         id: "vision-model",

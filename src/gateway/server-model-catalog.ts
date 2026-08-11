@@ -64,17 +64,23 @@ async function loadGatewayModelCatalogOwnerSnapshot(
   );
 }
 
-export async function loadGatewayModelCatalogSnapshot(
-  params?: LoadGatewayModelCatalogParams,
-): Promise<GatewayModelCatalogSnapshot> {
-  const owner = await loadGatewayModelCatalogOwnerSnapshot(params);
+function projectGatewayModelCatalogSnapshot(
+  owner: GatewayModelCatalogOwnerSnapshot,
+): GatewayModelCatalogSnapshot {
   return {
     ...owner.modelCatalog,
     agentId: owner.agentId,
     agentDir: owner.agentDir,
     workspaceDir: owner.workspaceDir,
     config: owner.config,
+    metadataSnapshot: owner.metadataSnapshot,
   };
+}
+
+export async function loadGatewayModelCatalogSnapshot(
+  params?: LoadGatewayModelCatalogParams,
+): Promise<GatewayModelCatalogSnapshot> {
+  return projectGatewayModelCatalogSnapshot(await loadGatewayModelCatalogOwnerSnapshot(params));
 }
 
 export async function loadGatewayModelCatalog(
@@ -96,4 +102,22 @@ export async function readPreparedGatewayModelCatalog(
     readOnly: true,
     ...(params?.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
   })?.entries;
+}
+
+/** Reads the published owner generation without activating or materializing catalog discovery. */
+export async function readPreparedGatewayModelCatalogSnapshot(
+  params?: LoadGatewayModelCatalogParams,
+): Promise<GatewayModelCatalogSnapshot | undefined> {
+  const { getPublishedPreparedModelCatalogOwnerSnapshot } =
+    await import("../agents/prepared-model-catalog.js");
+  const config = (params?.getConfig ?? getRuntimeConfig)();
+  const published = getPublishedPreparedModelCatalogOwnerSnapshot({
+    ...(params?.agentId ? { agentId: params.agentId } : {}),
+    ...(params?.agentDir ? { agentDir: params.agentDir } : {}),
+    config,
+    ...(params?.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
+  });
+  return published
+    ? projectGatewayModelCatalogSnapshot(resolvePublishedModelCatalogOwner(published))
+    : undefined;
 }
