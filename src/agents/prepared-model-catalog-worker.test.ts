@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import {
   createPreparedModelCatalogWorkerInput,
+  fingerprintPreparedModelCatalogGeneration,
   runPreparedModelCatalogWorker,
 } from "./prepared-model-catalog-worker.js";
 import type { PreparedModelRuntimeAgentFacts } from "./prepared-model-runtime.facts.js";
@@ -15,6 +16,33 @@ afterEach(() => {
 });
 
 describe("prepared model catalog worker", () => {
+  it("treats derived and persisted copies of the same plugin registry as one generation", () => {
+    const input = { agentDir: "/tmp/agent", config: {}, env: {}, skipCredentials: true };
+    const common = {
+      input,
+      credentials: {},
+      providerIds: [],
+      pluginMetadataSnapshot: {
+        policyHash: "test-policy",
+        configFingerprint: "test-config",
+        index: {} as never,
+        plugins: [],
+      } as unknown as PluginMetadataSnapshot,
+    };
+
+    expect(
+      fingerprintPreparedModelCatalogGeneration({
+        ...common,
+        pluginMetadataSnapshot: { ...common.pluginMetadataSnapshot, registrySource: "derived" },
+      }),
+    ).toBe(
+      fingerprintPreparedModelCatalogGeneration({
+        ...common,
+        pluginMetadataSnapshot: { ...common.pluginMetadataSnapshot, registrySource: "persisted" },
+      }),
+    );
+  });
+
   it("serializes only selected alias credentials without SecretRef provenance", () => {
     const workerInput = createPreparedModelCatalogWorkerInput({
       agentFacts: {

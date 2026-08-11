@@ -42,7 +42,6 @@ function fingerprintPreparedModelCatalogPlugins(snapshot: PluginMetadataSnapshot
     index: resolveInstalledManifestRegistryIndexFingerprint(snapshot.index),
     pluginIds: snapshot.pluginIds ?? null,
     policy: snapshot.policyHash,
-    registrySource: snapshot.registrySource ?? null,
     workspaceDir: snapshot.workspaceDir ?? null,
   });
 }
