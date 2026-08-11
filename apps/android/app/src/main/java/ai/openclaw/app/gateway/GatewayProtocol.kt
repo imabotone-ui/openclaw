@@ -541,6 +541,8 @@ enum class GatewayMethod(
   UsersPrefsSet("users.prefs.set"),
   ProjectsAdd("projects.add"),
   ProjectsSearchRemote("projects.searchRemote"),
+  DeviceScopesRequestUpgrade("device.scopes.requestUpgrade"),
+  DeviceScopesWaitUpgrade("device.scopes.waitUpgrade"),
 }
 
 enum class GatewayEvent(
