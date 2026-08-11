@@ -345,6 +345,27 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     visibleReplySent = true;
   };
 
+  const normalizeStreamingFinalizationFailure = (
+    error: unknown,
+  ): { result: FeishuReplyDeliveryResult; error: Error } | undefined => {
+    if (!(error instanceof FeishuStreamingFinalizationError)) {
+      return undefined;
+    }
+    const result = createFeishuReplyDeliveryResult({
+      results: [error.result],
+      visibleReplySent: error.result.visibleReplySent,
+      content: error.result.content,
+      kind: "card",
+    });
+    if (result.visibleReplySent) {
+      markVisibleReplySent();
+    }
+    return {
+      result,
+      error: createFeishuPartialReplyDeliveryError(error.cause ?? error, result),
+    };
+  };
+
   const formatReasoningPrefix = (thinking: string): string => {
     if (!thinking) {
       return "";
@@ -549,23 +570,12 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         try {
           closed = await streamingToClose.closeWithResult(text, { note: finalNote });
         } catch (error: unknown) {
-          if (!(error instanceof FeishuStreamingFinalizationError)) {
+          const failure = normalizeStreamingFinalizationFailure(error);
+          if (!failure) {
             throw error;
           }
-          const failedResult = createFeishuReplyDeliveryResult({
-            results: [error.result],
-            visibleReplySent: error.result.visibleReplySent,
-            content: error.result.content,
-            kind: "card",
-          });
-          if (failedResult.visibleReplySent) {
-            markVisibleReplySent();
-          }
+          const failedResult = failure.result;
           if (failedResult.visibleReplySent && finalizedAnswerText) {
-            const partialError = createFeishuPartialReplyDeliveryError(
-              error.cause ?? error,
-              failedResult,
-            );
             if (failedResult.content === text) {
               deliveredFinalTexts.add(finalizedAnswerText);
             }
@@ -573,12 +583,12 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
               generationToClose,
               finalizedAnswerText,
               failedResult,
-              partialError,
+              failure.error,
             );
             return {
               result: failedResult,
               ...(generationToClose === undefined ? {} : { generation: generationToClose }),
-              error: partialError,
+              error: failure.error,
             };
           }
           // Preserve the non-visible result so the settlement owner can recover the accepted
@@ -690,7 +700,12 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       }
       await partialUpdateQueue;
       if (streaming?.isActive()) {
-        await streaming.discard();
+        try {
+          await streaming.discard();
+        } catch (error: unknown) {
+          const failure = normalizeStreamingFinalizationFailure(error);
+          throw failure?.result.visibleReplySent ? failure.error : error;
+        }
       }
     } finally {
       resetStreamingState();

@@ -4,6 +4,7 @@ import type { DispatchReplyWithDispatcher } from "../../auto-reply/reply/provide
 import type { FinalizedMsgContext } from "../../auto-reply/templating.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { PlatformMessageNotDispatchedError } from "../../infra/outbound/deliver-types.js";
+import { createChannelPartialDeliveryError } from "./delivery-result.js";
 import { dispatchRoutedChannelTurn } from "./lifecycle.js";
 
 const dispatchReplyWithRoutedChannelDispatcherCore = vi.hoisted(() => vi.fn());
@@ -106,6 +107,14 @@ describe("channel turn failed-send custody", () => {
       label: "untyped failure affirms unknown custody",
       error: new Error("adapter failed after entry"),
       failureSettle: ["unknown", ["queued", "unknown"]] as const,
+    },
+    {
+      label: "visible partial delivery settles delivered custody",
+      error: createChannelPartialDeliveryError(new Error("finalization failed"), {
+        visibleReplySent: true,
+        content: "accepted partial",
+      }),
+      failureSettle: ["delivered", ["queued", "unknown"]] as const,
     },
   ])("$label", async ({ error, failureSettle }) => {
     await expect(run(error)).rejects.toBe(error);
