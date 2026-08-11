@@ -22,9 +22,9 @@ import { hasUsableOAuthCredential } from "./auth-profiles/credential-state.js";
 import { resolveExternalCliAuthProfiles } from "./auth-profiles/external-cli-sync.js";
 import {
   type AuthProfileOrderResolution,
-  isConfiguredAwsSdkAuthProfileForProvider,
-  resolveAuthProfileEligibility,
-  resolveAuthProfileOrderWithMetadata,
+  isConfiguredAwsSdkAuthProfileForProviderWithAliases,
+  resolveAuthProfileEligibilityWithAliases,
+  resolveAuthProfileOrderWithMetadataAndAliases,
 } from "./auth-profiles/order.js";
 import {
   hasMalformedSecretInputSyntax,
@@ -338,7 +338,7 @@ export function createModelAuthAvailabilityResolver(
     if (cached) {
       return cached;
     }
-    const resolution = resolveAuthProfileOrderWithMetadata({
+    const resolution = resolveAuthProfileOrderWithMetadataAndAliases({
       cfg: params.cfg,
       authAliasLookupParams,
       store: orderStore,
@@ -367,7 +367,7 @@ export function createModelAuthAvailabilityResolver(
       store.profiles[profileId] === credential
         ? store
         : { ...store, profiles: { ...store.profiles, [profileId]: credential } };
-    const eligibility = resolveAuthProfileEligibility({
+    const eligibility = resolveAuthProfileEligibilityWithAliases({
       cfg: params.cfg,
       authAliasLookupParams,
       store: effectiveStore,
@@ -427,7 +427,7 @@ export function createModelAuthAvailabilityResolver(
       return false;
     }
     if (
-      isConfiguredAwsSdkAuthProfileForProvider({
+      isConfiguredAwsSdkAuthProfileForProviderWithAliases({
         cfg: params.cfg,
         authAliasLookupParams,
         provider,
@@ -456,7 +456,7 @@ export function createModelAuthAvailabilityResolver(
       return true;
     }
     return Object.keys(store.profiles).some((profileId) => {
-      const reason = resolveAuthProfileEligibility({
+      const reason = resolveAuthProfileEligibilityWithAliases({
         cfg: params.cfg,
         authAliasLookupParams,
         store,
@@ -472,7 +472,7 @@ export function createModelAuthAvailabilityResolver(
     const storedOrder = findNormalizedProviderValue(store.order, normalized);
     const candidates = configuredOrder ?? storedOrder ?? Object.keys(store.profiles);
     return candidates.find((profileId) => {
-      const reason = resolveAuthProfileEligibility({
+      const reason = resolveAuthProfileEligibilityWithAliases({
         cfg: params.cfg,
         authAliasLookupParams,
         store,

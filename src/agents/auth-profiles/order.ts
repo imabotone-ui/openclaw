@@ -17,7 +17,7 @@ import {
   resolveTokenExpiryState,
   type AuthCredentialReasonCode,
 } from "./credential-state.js";
-import { dedupeProfileIds, listProfilesForProvider } from "./profile-list.js";
+import { dedupeProfileIds, listProfilesForProviderWithAliases } from "./profile-list.js";
 import type { AuthProfileCredential, AuthProfileStore } from "./types.js";
 import {
   clearExpiredCooldowns,
@@ -135,7 +135,11 @@ function listProfilesCompatibleWithAuthProvider(params: {
   providerAuthKey: string;
 }): string[] {
   if (params.providerAuthKey !== OPENAI_CODEX_PROVIDER_ID) {
-    return listProfilesForProvider(params.store, params.provider, params.authAliasLookupParams);
+    return listProfilesForProviderWithAliases(
+      params.store,
+      params.provider,
+      params.authAliasLookupParams,
+    );
   }
   return Object.entries(params.store.profiles)
     .filter(([, credential]) =>
@@ -170,6 +174,14 @@ function providerAllowsAwsSdkAuth(cfg: OpenClawConfig | undefined, provider: str
 /** Returns true when config declares an aws-sdk auth profile for a provider. */
 export function isConfiguredAwsSdkAuthProfileForProvider(params: {
   cfg?: OpenClawConfig;
+  provider: string;
+  profileId: string;
+}): boolean {
+  return isConfiguredAwsSdkAuthProfileForProviderWithAliases(params);
+}
+
+export function isConfiguredAwsSdkAuthProfileForProviderWithAliases(params: {
+  cfg?: OpenClawConfig;
   authAliasLookupParams?: ProviderAuthAliasLookupParams;
   provider: string;
   profileId: string;
@@ -194,14 +206,25 @@ export function isConfiguredAwsSdkAuthProfileForProvider(params: {
 }
 
 /** Resolves whether a profile can be used for a provider right now. */
-export function resolveAuthProfileEligibility(params: {
+type ResolveAuthProfileEligibilityParams = {
   cfg?: OpenClawConfig;
-  authAliasLookupParams?: ProviderAuthAliasLookupParams;
   store: AuthProfileStore;
   provider: string;
   profileId: string;
   now?: number;
-}): AuthProfileEligibility {
+};
+
+export function resolveAuthProfileEligibility(
+  params: ResolveAuthProfileEligibilityParams,
+): AuthProfileEligibility {
+  return resolveAuthProfileEligibilityWithAliases(params);
+}
+
+export function resolveAuthProfileEligibilityWithAliases(
+  params: ResolveAuthProfileEligibilityParams & {
+    authAliasLookupParams?: ProviderAuthAliasLookupParams;
+  },
+): AuthProfileEligibility {
   const providerAuthKey = resolveProviderIdForAuth(params.provider, {
     config: params.cfg,
     ...params.authAliasLookupParams,
@@ -209,7 +232,7 @@ export function resolveAuthProfileEligibility(params: {
   const cred = params.store.profiles[params.profileId];
   if (!cred) {
     if (
-      isConfiguredAwsSdkAuthProfileForProvider({
+      isConfiguredAwsSdkAuthProfileForProviderWithAliases({
         cfg: params.cfg,
         authAliasLookupParams: params.authAliasLookupParams,
         provider: params.provider,
@@ -263,7 +286,6 @@ export function resolveAuthProfileEligibility(params: {
 
 type ResolveAuthProfileOrderParams = {
   cfg?: OpenClawConfig;
-  authAliasLookupParams?: ProviderAuthAliasLookupParams;
   store: AuthProfileStore;
   provider: string;
   preferredProfile?: string;
@@ -282,6 +304,14 @@ export type AuthProfileOrderResolution = {
 /** Resolves ordered usable auth profiles plus whether an explicit order owns selection. */
 export function resolveAuthProfileOrderWithMetadata(
   params: ResolveAuthProfileOrderParams,
+): AuthProfileOrderResolution {
+  return resolveAuthProfileOrderWithMetadataAndAliases(params);
+}
+
+export function resolveAuthProfileOrderWithMetadataAndAliases(
+  params: ResolveAuthProfileOrderParams & {
+    authAliasLookupParams?: ProviderAuthAliasLookupParams;
+  },
 ): AuthProfileOrderResolution {
   const { cfg, store, provider, preferredProfile, forModel } = params;
   const providerKey = normalizeProviderId(provider);
@@ -364,7 +394,7 @@ export function resolveAuthProfileOrderWithMetadata(
   }
 
   const isValidProfile = (profileId: string): boolean => {
-    const eligibility = resolveAuthProfileEligibility({
+    const eligibility = resolveAuthProfileEligibilityWithAliases({
       cfg,
       authAliasLookupParams: params.authAliasLookupParams,
       store,

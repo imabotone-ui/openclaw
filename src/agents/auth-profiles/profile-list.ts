@@ -16,7 +16,12 @@ export function dedupeProfileIds(profileIds: string[]): string[] {
 }
 
 /** Lists auth profile ids whose credential provider matches the requested provider. */
-export function listProfilesForProvider(
+export function listProfilesForProvider(store: AuthProfileStore, provider: string): string[] {
+  return listProfilesForProviderWithAliases(store, provider);
+}
+
+/** Internal variant that resolves aliases against an exact prepared metadata generation. */
+export function listProfilesForProviderWithAliases(
   store: AuthProfileStore,
   provider: string,
   aliasLookupParams?: ProviderAuthAliasLookupParams,
