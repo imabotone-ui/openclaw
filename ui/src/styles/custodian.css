@@ -360,6 +360,11 @@ openclaw-custodian-page {
   white-space: nowrap;
 }
 
+.custodian__structured-response-status {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .custodian__wizard-title {
   color: var(--text-strong);
   font-size: 14px;

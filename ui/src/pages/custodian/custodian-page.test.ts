@@ -249,6 +249,9 @@ describe("custodian page", () => {
     expect(page.querySelector(".custodian__structured-response")?.textContent).toContain(
       "Setup cancelled",
     );
+    const cancellationStatus = page.querySelector(".custodian__structured-response-status");
+    expect(cancellationStatus?.textContent).toBe("Setup cancelled");
+    expect(cancellationStatus?.classList.contains("sr-only")).toBe(false);
     expect(page.querySelector(".custodian__structured-response-icon--cancelled")).not.toBeNull();
     expect(page.querySelector(".agent-chat__composer-shell")).not.toBeNull();
   });

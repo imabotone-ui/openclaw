@@ -137,6 +137,9 @@ describe("custodian structured wizard", () => {
       expect(button).not.toBeUndefined();
       return button!;
     });
+    const uncertainStatus = page.querySelector(".custodian__structured-response-status");
+    expect(uncertainStatus?.textContent).toBe("Answer sent; confirmation unavailable");
+    expect(uncertainStatus?.classList.contains("sr-only")).toBe(false);
     checkStatus.click();
 
     await waitForFast(() => expect(page.textContent).toContain("Agent name"));

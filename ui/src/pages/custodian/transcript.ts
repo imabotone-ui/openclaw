@@ -337,7 +337,7 @@ function renderStructuredResponse(
     <span class="custodian__structured-response-copy">
       <span class="custodian__structured-response-prompt">${structuredPrompt(message)}</span>
       <strong>${response.display}</strong>
-      <span class="sr-only">${status}</span>
+      <span class="custodian__structured-response-status">${status}</span>
     </span>
     ${response.state === "uncertain" && recovery.mode
       ? html`<button
