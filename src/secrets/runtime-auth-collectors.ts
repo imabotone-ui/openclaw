@@ -1,6 +1,6 @@
 /** Collects auth-profile and OAuth secret refs for runtime preparation. */
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
-import { resolveAuthProfileEligibility } from "../agents/auth-profiles/order.js";
+import { resolveAuthProfileEligibilityWithAliases } from "../agents/auth-profiles/order.js";
 import { assertNoOAuthSecretRefPolicyViolations } from "../agents/auth-profiles/policy.js";
 import type { AuthProfileCredential, AuthProfileStore } from "../agents/auth-profiles/types.js";
 import type { ProviderAuthAliasLookupParams } from "../agents/provider-auth-aliases.js";
@@ -89,7 +89,7 @@ function collectApiKeyProfileAssignment(params: {
   }
   // Only successful runtime materialization may populate the authoritative secret slot.
   params.profile.key = undefined;
-  const eligibility = resolveAuthProfileEligibility({
+  const eligibility = resolveAuthProfileEligibilityWithAliases({
     cfg: params.context.sourceConfig,
     authAliasLookupParams: params.authAliasLookupParams,
     store: params.store,
@@ -156,7 +156,7 @@ function collectTokenProfileAssignment(params: {
   }
   // Only successful runtime materialization may populate the authoritative secret slot.
   params.profile.token = undefined;
-  const eligibility = resolveAuthProfileEligibility({
+  const eligibility = resolveAuthProfileEligibilityWithAliases({
     cfg: params.context.sourceConfig,
     authAliasLookupParams: params.authAliasLookupParams,
     store: params.store,

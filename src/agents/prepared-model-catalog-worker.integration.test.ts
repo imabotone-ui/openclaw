@@ -1,7 +1,7 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
 import {
@@ -19,14 +19,12 @@ const PROVIDER_ID = "worker-catalog-fixture";
 const PLUGIN_ID = "worker-catalog-fixture";
 const MATERIALIZED_SECRET = "materialized-worker-secret-not-real";
 const UNRELATED_SECRET = "unrelated-worker-secret-not-real";
-const tempDirs: string[] = [];
-
-afterEach(() => {
-  clearRuntimeAuthProfileStoreSnapshots();
-  closeOpenClawAgentDatabasesForTest();
-  for (const dir of tempDirs.splice(0)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+const tempDirs = useAutoCleanupTempDirTracker((cleanup) => {
+  afterEach(() => {
+    clearRuntimeAuthProfileStoreSnapshots();
+    closeOpenClawAgentDatabasesForTest();
+    cleanup();
+  });
 });
 
 function writeFixturePlugin(params: { root: string; spinMs: number }) {
@@ -79,8 +77,7 @@ module.exports = {
 }
 
 async function createStaticSnapshot(params: { spinMs: number }) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-model-catalog-worker-"));
-  tempDirs.push(root);
+  const root = tempDirs.make("openclaw-model-catalog-worker-");
   const stateDir = path.join(root, "state");
   const agentDir = path.join(stateDir, "agents", "main", "agent");
   const workspaceDir = path.join(root, "workspace");
