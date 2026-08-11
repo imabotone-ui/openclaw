@@ -28,6 +28,7 @@ import { createLazyGatewayCronState } from "./server-cron-lazy.js";
 import { createGatewayCronReconciliation } from "./server-cron-reconciled.js";
 import { applyGatewayLaneConcurrency, resolveGatewayLaneConcurrency } from "./server-lanes.js";
 import { createGatewayServerLiveState } from "./server-live-state.js";
+import { retireAndDisposeSystemAgentSessions } from "./server-methods/system-agent-session-lifecycle.js";
 import type { GatewayRequestContext } from "./server-methods/types.js";
 import {
   type GatewayCloseOptions,
@@ -100,6 +101,9 @@ export async function prepareGatewayLifecycle(params: {
     defaultWorkspaceDir,
     activeTaskCount,
     residentRegistry,
+    systemAgentSessions,
+    wizardSessions,
+    pluginGatewayContext,
   } = runtime;
   const completeControlUiDeviceAuthMigrationForEffectiveOperator = (
     device: EffectiveOperatorDeviceIdentity,
@@ -404,6 +408,20 @@ export async function prepareGatewayLifecycle(params: {
     maintenanceTimer: null,
     retainedPluginCleanupHandle: null,
   };
+  let systemAgentSessionsStopPromise: Promise<void> | null = null;
+  const systemAgentSessionsResident = residentRegistry.register({
+    name: "system-agent-sessions",
+    start: () => undefined,
+    stop: () => {
+      systemAgentSessionsStopPromise ??= retireAndDisposeSystemAgentSessions({
+        sessions: systemAgentSessions,
+        wizardSessions,
+        approvalManager: pluginGatewayContext.current?.systemAgentApprovalManager,
+      });
+      return systemAgentSessionsStopPromise;
+    },
+  });
+  systemAgentSessionsResident.start();
   const clearPostReadyMaintenanceTimer = () => {
     if (!postReadyState.maintenanceTimer) {
       return;
@@ -425,6 +443,7 @@ export async function prepareGatewayLifecycle(params: {
     lifecycle.closePreludeStarted = true;
     // Fence background owners before any awaited close step can tear down the
     // plugin/channel or shared-state runtime they still need.
+    void systemAgentSessionsResident.stop();
     void stopOutboundDeliveryRecoveryForClose();
     void stopMediaCleanupForClose();
     runtimeState.stopGatewayUpdateCheck();
@@ -452,6 +471,7 @@ export async function prepareGatewayLifecycle(params: {
       stopOutboundDeliveryRecoveryForClose(),
       stopMediaCleanupForClose(),
       stopConfigReloaderForClose().catch(() => {}),
+      systemAgentSessionsResident.stop(),
     ]);
   };
   const runClosePrelude = async () => {
