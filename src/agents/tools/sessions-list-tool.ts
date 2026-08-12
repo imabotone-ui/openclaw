@@ -36,11 +36,11 @@ import {
   readStringArrayParam,
   readToolStringParam,
 } from "./common.js";
-import { resolveSessionToolTargetAgentId } from "./scoped-session-access.js";
 import {
   callAgentToolGatewayRequest,
   type AgentToolGatewayRequestCaller,
 } from "./in-process-gateway.js";
+import { resolveSessionToolTargetAgentId } from "./scoped-session-access.js";
 import {
   createAgentToAgentPolicy,
   createSessionVisibilityRowChecker,
