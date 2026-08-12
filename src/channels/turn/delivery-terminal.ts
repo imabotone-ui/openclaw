@@ -13,8 +13,6 @@ import { normalizeChatType } from "../chat-type.js";
 import { isChannelPartialDeliveryError } from "./delivery-result.js";
 import type { ChannelDeliveryTerminal } from "./delivery-terminal.types.js";
 
-export type { ChannelDeliveryTerminal } from "./delivery-terminal.types.js";
-
 /** Classifies one settled delivery failure without exposing its raw error graph. */
 export function resolveChannelDeliveryFailureTerminal(params: {
   error: unknown;
