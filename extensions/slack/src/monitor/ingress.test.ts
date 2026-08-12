@@ -466,7 +466,12 @@ describe("Slack durable ingress", () => {
     });
   });
 
-  it.each([
+  const durableSystemEventRetryCases: Array<{
+    name: string;
+    eventId: string;
+    event: Record<string, PluginJsonValue>;
+    registerEvents: RegisterSlackSystemEvents;
+  }> = [
     {
       name: "member",
       eventId: "Ev-member-retry",
@@ -498,61 +503,66 @@ describe("Slack durable ingress", () => {
       },
       registerEvents: registerSlackReactionEvents,
     },
-  ])("retries transient $name failures through Bolt after restart", async (testCase) => {
-    await withQueue(async (queue) => {
-      const trackEvent = vi.fn();
-      let userLookupCount = 0;
-      const resolveUserName = async () => {
-        userLookupCount += 1;
-        if (userLookupCount === 2) {
-          throw new Error("users.info temporarily unavailable");
-        }
-        return { name: "alice" };
-      };
-      const first = attachBoltSystemEventIngress({
-        queue,
-        trackEvent,
-        resolveUserName,
-        registerEvents: testCase.registerEvents,
-      });
-      first.ingress.start();
-      let restarted: ReturnType<typeof attachBoltSystemEventIngress> | undefined;
-      try {
-        await first.receive(
-          createReceiverEvent(testCase.eventId, undefined, {
-            event: testCase.event,
-          }),
-        );
-        await first.ingress.waitForIdle();
-        await first.ingress.stop();
+  ];
 
-        expect(trackEvent).toHaveBeenCalledTimes(1);
-        expect(peekSystemEventEntries("agent:main:main")).toHaveLength(0);
-        expect((await queue.listPending()).map((entry) => entry.id)).toContain(testCase.eventId);
-
-        restarted = attachBoltSystemEventIngress({
+  it.each(durableSystemEventRetryCases)(
+    "retries transient $name failures through Bolt after restart",
+    async (testCase) => {
+      await withQueue(async (queue) => {
+        const trackEvent = vi.fn();
+        let userLookupCount = 0;
+        const resolveUserName = async () => {
+          userLookupCount += 1;
+          if (userLookupCount === 2) {
+            throw new Error("users.info temporarily unavailable");
+          }
+          return { name: "alice" };
+        };
+        const first = attachBoltSystemEventIngress({
           queue,
           trackEvent,
           resolveUserName,
           registerEvents: testCase.registerEvents,
-          pollIntervalMs: 25,
         });
-        restarted.ingress.start();
-        await vi.waitFor(
-          async () => {
-            await restarted?.ingress.waitForIdle();
-            expect(trackEvent).toHaveBeenCalledTimes(2);
-          },
-          { timeout: 15_000, interval: 100 },
-        );
+        first.ingress.start();
+        let restarted: ReturnType<typeof attachBoltSystemEventIngress> | undefined;
+        try {
+          await first.receive(
+            createReceiverEvent(testCase.eventId, undefined, {
+              event: testCase.event,
+            }),
+          );
+          await first.ingress.waitForIdle();
+          await first.ingress.stop();
 
-        expect(peekSystemEventEntries("agent:main:main")).toHaveLength(1);
-      } finally {
-        await first.ingress.stop();
-        await restarted?.ingress.stop();
-      }
-    });
-  });
+          expect(trackEvent).toHaveBeenCalledTimes(1);
+          expect(peekSystemEventEntries("agent:main:main")).toHaveLength(0);
+          expect((await queue.listPending()).map((entry) => entry.id)).toContain(testCase.eventId);
+
+          restarted = attachBoltSystemEventIngress({
+            queue,
+            trackEvent,
+            resolveUserName,
+            registerEvents: testCase.registerEvents,
+            pollIntervalMs: 25,
+          });
+          restarted.ingress.start();
+          await vi.waitFor(
+            async () => {
+              await restarted?.ingress.waitForIdle();
+              expect(trackEvent).toHaveBeenCalledTimes(2);
+            },
+            { timeout: 15_000, interval: 100 },
+          );
+
+          expect(peekSystemEventEntries("agent:main:main")).toHaveLength(1);
+        } finally {
+          await first.ingress.stop();
+          await restarted?.ingress.stop();
+        }
+      });
+    },
+  );
 });
 
 describe("Slack relay durable ingress", () => {
