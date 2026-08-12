@@ -827,6 +827,7 @@ describe("runPreparedReply media-only handling", () => {
 
   it("does not borrow target-session silence for native commands sent from direct chats", async () => {
     await runPrepared({
+      agentId: "main",
       sessionKey: "agent:main:telegram:group:target",
       ctx: {
         ...createInboundBody(""),
@@ -927,6 +928,7 @@ describe("runPreparedReply media-only handling", () => {
     vi.mocked(embeddedAgentRuntime.isEmbeddedAgentRunStreaming).mockReturnValueOnce(true);
 
     const params = baseParams({
+      agentId: "main",
       sessionKey: `agent:main:${channel}:direct:steer-smoke`,
     });
     params.ctx = {
