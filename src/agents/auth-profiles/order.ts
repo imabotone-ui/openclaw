@@ -208,6 +208,8 @@ export function isConfiguredAwsSdkAuthProfileForProviderWithAliases(params: {
 /** Resolves whether a profile can be used for a provider right now. */
 type ResolveAuthProfileEligibilityParams = {
   cfg?: OpenClawConfig;
+  /** Public SDK callers may bind alias resolution to an exact plugin metadata generation. */
+  authAliasLookupParams?: ProviderAuthAliasLookupParams;
   store: AuthProfileStore;
   provider: string;
   profileId: string;
