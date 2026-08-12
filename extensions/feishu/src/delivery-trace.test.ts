@@ -594,6 +594,7 @@ describe("feishu producer custody boundaries", () => {
         sendTarget: "oc-trace-chat",
         ...dispatcherParams,
       });
+      const settled = vi.spyOn(created.dispatcherOptions, "onSettled");
       const sourcePayload = setReplyPayloadMetadata(
         { text: "the final answer" },
         { pendingFinalDeliveryCompletion: pendingFinalCompletion },
@@ -618,6 +619,8 @@ describe("feishu producer custody boundaries", () => {
             });
             await dispatcherOptions.onError?.(blockError, { kind: "block" });
           }
+          // Typing TTL/cleanup can fire while the same turn still has a queued final.
+          created.dispatcherOptions.onCleanup?.();
           await dispatcherOptions.deliver?.(sourcePayload, { kind: "final" });
           return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
         },
@@ -630,6 +633,8 @@ describe("feishu producer custody boundaries", () => {
         name: "PlatformMessageNotDispatchedError",
         retryable: false,
       });
+      await created.dispatcherOptions.onSettled?.();
+      expect(settled).toHaveBeenCalledOnce();
       expect(settlePendingFinalDeliveryMock).toHaveBeenNthCalledWith(
         2,
         { kind: "pending-final", ...pendingFinalCompletion },

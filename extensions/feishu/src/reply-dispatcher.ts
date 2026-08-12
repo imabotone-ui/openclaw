@@ -1255,10 +1255,12 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       await Promise.resolve(typingCallbacks?.onReplyStart?.());
     },
     onIdle: () => queueIdleSideEffects(),
-    onCleanup: () => {
-      // Per-delivery cleanup may run between serialized block/final payloads.
-      // Release a terminal start rejection only when the logical turn is exhausted.
+    onSettled: () => {
+      // Typing cleanup can run between serialized deliveries; dispatcher settlement
+      // is the owner boundary that proves this turn can no longer attempt a replay.
       terminalStreamingStartError = undefined;
+    },
+    onCleanup: () => {
       typingCallbacks?.onCleanup?.();
     },
   };
