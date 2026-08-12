@@ -44,13 +44,13 @@ describe("prepared model catalog worker", () => {
     );
   });
 
-  it("serializes only selected alias credentials without SecretRef provenance", () => {
+  it("serializes alias-stored credentials while preferring canonical keys", () => {
     const workerInput = createPreparedModelCatalogWorkerInput({
       agentFacts: {
         input: { agentDir: "/tmp/agent", config: {}, workspaceDir: "/tmp/workspace" },
         env: {},
         credentials: {
-          canonical: {
+          "provider-alias": {
             type: "oauth",
             access: "selected-access",
             refresh: "selected-refresh",
@@ -63,12 +63,16 @@ describe("prepared model catalog worker", () => {
             key: "selected-key",
             keyRef: { source: "env", id: "SELECTED_KEY" },
           } as never,
+          "canonical-with-both": { type: "api_key", key: "canonical-key" },
+          "provider-with-both-alias": { type: "api_key", key: "alias-key" },
           unrelated: { type: "api_key", key: "unrelated-key" },
         },
         credentialProfileIds: {
-          canonical: "canonical:named",
+          "provider-alias": "provider-alias:named",
+          "canonical-with-both": "canonical-with-both:named",
+          "provider-with-both-alias": "provider-with-both-alias:named",
         },
-        providerIds: ["provider-alias", "direct"],
+        providerIds: ["provider-alias", "provider-with-both-alias", "direct"],
         configuredModelRefs: [],
         configuredRuntimeModels: [],
         configuredGeneratedCatalogPluginIds: [],
@@ -82,7 +86,10 @@ describe("prepared model catalog worker", () => {
           {
             id: "provider-plugin",
             origin: "bundled",
-            providerAuthAliases: { "provider-alias": "canonical" },
+            providerAuthAliases: {
+              "provider-alias": "canonical",
+              "provider-with-both-alias": "canonical-with-both",
+            },
           } as never,
         ],
       } as unknown as PluginMetadataSnapshot,
@@ -96,9 +103,13 @@ describe("prepared model catalog worker", () => {
         expires: 4_102_444_800_000,
         accountId: "selected-account",
       },
+      "canonical-with-both": { type: "api_key", key: "canonical-key" },
       direct: { type: "api_key", key: "selected-key" },
     });
-    expect(workerInput.profileIds).toEqual({ canonical: "canonical:named" });
+    expect(workerInput.profileIds).toEqual({
+      canonical: "provider-alias:named",
+      "canonical-with-both": "canonical-with-both:named",
+    });
   });
 
   it("rejects a timed-out exact discovery instead of returning an empty or partial catalog", async () => {

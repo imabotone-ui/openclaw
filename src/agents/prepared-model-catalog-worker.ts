@@ -2,7 +2,10 @@
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
-import { findNormalizedProviderValue } from "@openclaw/model-catalog-core/provider-id";
+import {
+  findNormalizedProviderKey,
+  findNormalizedProviderValue,
+} from "@openclaw/model-catalog-core/provider-id";
 import { resolveInstalledManifestRegistryIndexFingerprint } from "../plugins/manifest-registry-installed.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import type { ModelCatalogSnapshot } from "./model-catalog.types.js";
@@ -80,22 +83,36 @@ function projectPreparedModelCatalogWorkerAuth(params: {
   const profileIds: Record<string, string> = {};
   // providerIds already closes over configured refs and explicit provider config.
   for (const provider of params.agentFacts.providerIds) {
-    const authProvider = resolveProviderIdForAuth(provider, {
+    const aliasLookupParams = {
       config: input.config,
       env: params.agentFacts.env,
       ...(input.workspaceDir ? { workspaceDir: input.workspaceDir } : {}),
       metadataSnapshot: params.pluginMetadataSnapshot,
-    });
-    const credential = findNormalizedProviderValue(params.agentFacts.credentials, authProvider);
-    if (credential) {
-      credentials[authProvider] = projectWorkerCredential(credential);
-      const profileId = findNormalizedProviderValue(
-        params.agentFacts.credentialProfileIds,
-        authProvider,
-      );
-      if (profileId) {
-        profileIds[authProvider] = profileId;
-      }
+    };
+    const authProvider = resolveProviderIdForAuth(provider, aliasLookupParams);
+    // Keep an exact canonical selection authoritative. Alias-only persisted profiles remain
+    // valid input, so fall back through the same lifecycle-owned alias snapshot.
+    const credentialProvider =
+      findNormalizedProviderKey(params.agentFacts.credentials, authProvider) ??
+      Object.keys(params.agentFacts.credentials)
+        .toSorted((left, right) => left.localeCompare(right))
+        .find(
+          (candidate) => resolveProviderIdForAuth(candidate, aliasLookupParams) === authProvider,
+        );
+    if (!credentialProvider) {
+      continue;
+    }
+    const credential = params.agentFacts.credentials[credentialProvider];
+    if (!credential) {
+      continue;
+    }
+    credentials[authProvider] = projectWorkerCredential(credential);
+    const profileId = findNormalizedProviderValue(
+      params.agentFacts.credentialProfileIds,
+      credentialProvider,
+    );
+    if (profileId) {
+      profileIds[authProvider] = profileId;
     }
   }
   return { credentials, profileIds };

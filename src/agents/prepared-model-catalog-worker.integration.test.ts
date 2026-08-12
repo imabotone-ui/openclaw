@@ -16,8 +16,9 @@ import {
 import { startSerializedSnapshotBuild } from "./prepared-model-runtime.build.js";
 
 const PROVIDER_ID = "worker-catalog-fixture";
+const PROVIDER_ALIAS_ID = `${PROVIDER_ID}-plan`;
 const PLUGIN_ID = "worker-catalog-fixture";
-const PROFILE_ID = `${PROVIDER_ID}:named`;
+const PROFILE_ID = `${PROVIDER_ALIAS_ID}:named`;
 const MATERIALIZED_SECRET = "materialized-worker-secret-not-real";
 const UNRELATED_SECRET = "unrelated-worker-secret-not-real";
 const tempDirs = useAutoCleanupTempDirTracker((cleanup) => {
@@ -89,7 +90,8 @@ module.exports = {
     path.join(pluginDir, "openclaw.plugin.json"),
     JSON.stringify({
       id: PLUGIN_ID,
-      providers: [PROVIDER_ID],
+      providers: [PROVIDER_ID, PROVIDER_ALIAS_ID],
+      providerAuthAliases: { [PROVIDER_ALIAS_ID]: PROVIDER_ID },
       configSchema: { type: "object", additionalProperties: false, properties: {} },
       modelCatalog: {
         discovery: { [PROVIDER_ID]: "runtime" },
@@ -133,13 +135,13 @@ async function createStaticSnapshot(params: { spinMs: number }) {
         profiles: {
           [PROFILE_ID]: {
             type: "token",
-            provider: PROVIDER_ID,
+            provider: PROVIDER_ALIAS_ID,
             token: MATERIALIZED_SECRET,
             tokenRef: { source: "env", provider: "default", id: "FIXTURE_SECRET_REF" },
           },
-          [`${PROVIDER_ID}:default`]: {
+          [`${PROVIDER_ALIAS_ID}:default`]: {
             type: "api_key",
-            provider: PROVIDER_ID,
+            provider: PROVIDER_ALIAS_ID,
             key: "unselected-worker-secret-not-real",
           },
           "unrelated-provider:default": {
