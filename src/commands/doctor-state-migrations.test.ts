@@ -1026,7 +1026,6 @@ describe("doctor legacy state migrations", () => {
     const result = await runLegacyStateMigrations({ detected });
     expect(result.warnings).toStrictEqual([]);
     expect(result.changes).toStrictEqual([
-      "Retired shared state commitments table and indexes",
       "Migrated shared state agent database registry primary key → agent_id,path",
     ]);
 
