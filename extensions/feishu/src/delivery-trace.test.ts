@@ -609,6 +609,15 @@ describe("feishu producer custody boundaries", () => {
         ctxPayload: createTraceContext(),
         recordInboundSession: async () => undefined,
         dispatchReplyWithBufferedBlockDispatcher: async ({ dispatcherOptions }) => {
+          try {
+            await dispatcherOptions.deliver?.({ text: "the queued block" }, { kind: "block" });
+          } catch (blockError: unknown) {
+            expect(blockError).toMatchObject({
+              name: "PlatformMessageNotDispatchedError",
+              retryable: false,
+            });
+            await dispatcherOptions.onError?.(blockError, { kind: "block" });
+          }
           await dispatcherOptions.deliver?.(sourcePayload, { kind: "final" });
           return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
         },
@@ -635,6 +644,35 @@ describe("feishu producer custody boundaries", () => {
       await created.dispatcherOptions.onIdle?.();
       await created.dispatcherOptions.onIdle?.();
       expect(streamingStartBackoffUntilByAccount.has("main")).toBe(false);
+
+      created.dispatcherOptions.onCleanup?.();
+      traceState.messageResult = "identified";
+      const fresh = createFeishuReplyDispatcher({
+        cfg: {} as never,
+        agentId: "agent",
+        runtime: { log: () => {}, error: () => {} } as never,
+        chatId: "oc-trace-chat",
+        sendTarget: "oc-trace-chat",
+        ...dispatcherParams,
+      });
+      const freshDelivery = await fresh.delivery.deliver(
+        { text: "fresh independent turn" },
+        { kind: "final" },
+      );
+      await fresh.dispatcherOptions.onIdle?.();
+      if (!freshDelivery?.finalization) {
+        throw new Error("fresh streaming delivery did not expose finalization");
+      }
+      await expect(freshDelivery.finalization).resolves.toMatchObject({
+        visibleReplySent: true,
+        content: "fresh independent turn",
+      });
+      fresh.dispatcherOptions.onCleanup?.();
+      expect(
+        wireCalls.filter(
+          (call) => call.method === "im.message.reply" || call.method === "im.message.create",
+        ),
+      ).toHaveLength(2);
     },
   );
 

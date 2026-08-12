@@ -538,7 +538,6 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   const resetStreamingState = () => {
     streaming = null;
     streamingStartPromise = null;
-    terminalStreamingStartError = undefined;
     activeStreamingGeneration = undefined;
     partialUpdateQueue = Promise.resolve();
     streamText = "";
@@ -1257,6 +1256,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     },
     onIdle: () => queueIdleSideEffects(),
     onCleanup: () => {
+      // Per-delivery cleanup may run between serialized block/final payloads.
+      // Release a terminal start rejection only when the logical turn is exhausted.
+      terminalStreamingStartError = undefined;
       typingCallbacks?.onCleanup?.();
     },
   };
