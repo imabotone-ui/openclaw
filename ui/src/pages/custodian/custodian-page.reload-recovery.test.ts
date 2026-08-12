@@ -115,6 +115,7 @@ describe("Custodian wizard reload recovery", () => {
           sessionId: "live-wizard",
           reply: "Twitch setup cancelled.",
           action: "none",
+          wizardActionAccepted: true,
         };
       }
       freshChatCount += 1;
