@@ -21,7 +21,7 @@ import { resolveRuntimeSyntheticAuthProviderRefs } from "../plugins/synthetic-au
 import type { AgentCredentialMap } from "./agent-auth-credentials.js";
 import { resolveAmbientAgentCredentialsForDiscovery } from "./agent-auth-discovery.js";
 import {
-  discoverAuthStorage,
+  discoverAuthStorageSelection,
   discoverModels,
   discoverModelsFromCapturedSources,
 } from "./agent-model-discovery.js";
@@ -84,6 +84,7 @@ type PreparedModelRuntimeAgentBaseFacts = {
   env: NodeJS.ProcessEnv;
   templateAuthStorage: AuthStorage;
   credentials: Readonly<AuthStorageData>;
+  credentialProfileIds: Readonly<Record<string, string>>;
   providerIds: string[];
   configuredModelRefs: readonly ConfiguredModelRef[];
 };
@@ -120,7 +121,7 @@ function prepareAgentFacts(
   additionalProviderIds: readonly string[] = [],
 ): PreparedModelRuntimeAgentBaseFacts {
   const env = input.env ?? process.env;
-  const templateAuthStorage = discoverAuthStorage(input.agentDir, {
+  const authSelection = discoverAuthStorageSelection(input.agentDir, {
     config: input.config,
     // Prepared owners consume only the already-published runtime auth generation. External CLI
     // hydration belongs to startup/control-plane and turn-time producers, never rebuilds.
@@ -131,6 +132,7 @@ function prepareAgentFacts(
     ...(input.workspaceDir ? { workspaceDir: input.workspaceDir } : {}),
     ...(input.env ? { env } : {}),
   });
+  const templateAuthStorage = authSelection.authStorage;
   const credentials = templateAuthStorage.getAll();
   const configuredModelRefs = collectPreparedModelRuntimeConfiguredRefs(
     input.config,
@@ -141,6 +143,7 @@ function prepareAgentFacts(
     env,
     templateAuthStorage,
     credentials,
+    credentialProfileIds: authSelection.profileIds,
     configuredModelRefs,
     // Gateway startup prepares only providers named by config/model selection. An unrelated
     // stored credential must not pull that provider's complete catalog into the admission path.

@@ -73,12 +73,14 @@ vi.mock("./prepared-model-catalog-worker.js", () => ({
     agentFacts: {
       input: unknown;
       credentials: unknown;
+      credentialProfileIds: unknown;
       providerIds: unknown;
     };
   }) => ({
     generationFingerprint: "test-generation",
     input: agentFacts.input,
     credentials: agentFacts.credentials,
+    profileIds: agentFacts.credentialProfileIds,
     providerIds: agentFacts.providerIds,
   }),
   runPreparedModelCatalogWorker: (...args: unknown[]) =>
@@ -96,6 +98,12 @@ vi.mock("./agent-auth-discovery.js", () => ({
 }));
 
 vi.mock("./agent-model-discovery.js", () => ({
+  discoverAuthStorageSelection: (...args: unknown[]) => ({
+    authStorage:
+      preparedModelRuntimeMocks.discoverAuthStorage(...args) ??
+      preparedModelRuntimeMocks.authStorage,
+    profileIds: {},
+  }),
   discoverAuthStorage: (...args: unknown[]) =>
     preparedModelRuntimeMocks.discoverAuthStorage(...args) ?? preparedModelRuntimeMocks.authStorage,
   discoverModels: (...args: unknown[]) => {

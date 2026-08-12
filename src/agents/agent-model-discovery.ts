@@ -11,7 +11,7 @@ import {
 } from "../plugins/provider-runtime.js";
 import { isRecord } from "../utils.js";
 import {
-  resolveAgentCredentialsForDiscovery,
+  resolveAgentCredentialSelectionForDiscovery,
   type DiscoverAuthStorageOptions,
 } from "./agent-auth-discovery.js";
 import { resolveModelPluginMetadataSnapshot } from "./model-discovery-context.js";
@@ -192,13 +192,26 @@ function createOpenClawModelRegistry(
 }
 
 /** Builds auth storage for model discovery without prompting for secrets. */
+export function discoverAuthStorageSelection(
+  agentDir: string,
+  options?: DiscoverAuthStorageOptions,
+): { authStorage: AgentAuthStorage; profileIds: Readonly<Record<string, string>> } {
+  const selection =
+    options?.skipCredentials === true
+      ? { credentials: {}, profileIds: {} }
+      : resolveAgentCredentialSelectionForDiscovery(agentDir, options);
+  return {
+    authStorage: AuthStorage.inMemory(selection.credentials),
+    profileIds: selection.profileIds,
+  };
+}
+
+/** Builds auth storage for model discovery without prompting for secrets. */
 export function discoverAuthStorage(
   agentDir: string,
   options?: DiscoverAuthStorageOptions,
 ): AgentAuthStorage {
-  const credentials =
-    options?.skipCredentials === true ? {} : resolveAgentCredentialsForDiscovery(agentDir, options);
-  return AuthStorage.inMemory(credentials);
+  return discoverAuthStorageSelection(agentDir, options).authStorage;
 }
 
 /** Creates the model registry used by agent model discovery. */

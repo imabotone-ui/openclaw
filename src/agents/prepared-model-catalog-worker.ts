@@ -20,6 +20,7 @@ export type PreparedModelCatalogWorkerInput = Readonly<{
   generationFingerprint: string;
   input: PreparedModelRuntimeInput;
   credentials: Readonly<AuthStorageData>;
+  profileIds: Readonly<Record<string, string>>;
   providerIds: readonly string[];
 }>;
 
@@ -49,12 +50,14 @@ function fingerprintPreparedModelCatalogPlugins(snapshot: PluginMetadataSnapshot
 export function fingerprintPreparedModelCatalogGeneration(params: {
   input: PreparedModelRuntimeInput;
   credentials: Readonly<AuthStorageData>;
+  profileIds: Readonly<Record<string, string>>;
   providerIds: readonly string[];
   pluginMetadataSnapshot: PluginMetadataSnapshot;
 }): string {
   return fingerprintPreparedRuntimeFacts({
     input: params.input,
     credentials: params.credentials,
+    profileIds: params.profileIds,
     providerIds: params.providerIds,
     pluginFingerprint: fingerprintPreparedModelCatalogPlugins(params.pluginMetadataSnapshot),
   });
@@ -68,12 +71,13 @@ function projectWorkerCredential(credential: AuthCredential): AuthCredential {
   return projected;
 }
 
-function projectPreparedModelCatalogWorkerCredentials(params: {
+function projectPreparedModelCatalogWorkerAuth(params: {
   agentFacts: PreparedModelRuntimeAgentFacts;
   pluginMetadataSnapshot: PluginMetadataSnapshot;
-}): AuthStorageData {
+}): { credentials: AuthStorageData; profileIds: Record<string, string> } {
   const { input } = params.agentFacts;
   const credentials: AuthStorageData = {};
+  const profileIds: Record<string, string> = {};
   // providerIds already closes over configured refs and explicit provider config.
   for (const provider of params.agentFacts.providerIds) {
     const authProvider = resolveProviderIdForAuth(provider, {
@@ -85,9 +89,16 @@ function projectPreparedModelCatalogWorkerCredentials(params: {
     const credential = findNormalizedProviderValue(params.agentFacts.credentials, authProvider);
     if (credential) {
       credentials[authProvider] = projectWorkerCredential(credential);
+      const profileId = findNormalizedProviderValue(
+        params.agentFacts.credentialProfileIds,
+        authProvider,
+      );
+      if (profileId) {
+        profileIds[authProvider] = profileId;
+      }
     }
   }
-  return credentials;
+  return { credentials, profileIds };
 }
 
 export function createPreparedModelCatalogWorkerInput(params: {
@@ -111,17 +122,19 @@ export function createPreparedModelCatalogWorkerInput(params: {
       : {}),
     config: source.config,
   };
-  const credentials = projectPreparedModelCatalogWorkerCredentials(params);
+  const { credentials, profileIds } = projectPreparedModelCatalogWorkerAuth(params);
   const providerIds = [...params.agentFacts.providerIds];
   return {
     generationFingerprint: fingerprintPreparedModelCatalogGeneration({
       input,
       credentials,
+      profileIds,
       providerIds,
       pluginMetadataSnapshot: params.pluginMetadataSnapshot,
     }),
     input,
     credentials,
+    profileIds,
     providerIds,
   };
 }

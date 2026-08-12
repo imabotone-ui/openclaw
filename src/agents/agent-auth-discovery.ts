@@ -2,8 +2,9 @@
 import { resolveProviderSyntheticAuthWithPlugin } from "../plugins/provider-runtime.js";
 import { resolveRuntimeSyntheticAuthProviderRefs } from "../plugins/synthetic-auth.runtime.js";
 import {
-  resolveAgentCredentialMapFromStore,
+  resolveAgentCredentialSelectionFromStore,
   type AgentCredentialMap,
+  type AgentCredentialProfileIds,
 } from "./agent-auth-credentials.js";
 import {
   addEnvBackedAgentCredentials,
@@ -84,10 +85,10 @@ export function resolveAmbientAgentCredentialsForDiscovery(
 }
 
 /** Resolves agent credentials from auth profiles, env, and synthetic auth hooks. */
-export function resolveAgentCredentialsForDiscovery(
+export function resolveAgentCredentialSelectionForDiscovery(
   agentDir: string,
   options?: DiscoverAuthStorageOptions,
-): AgentCredentialMap {
+): { credentials: AgentCredentialMap; profileIds: AgentCredentialProfileIds } {
   const storeOptions = {
     allowKeychainPrompt: false,
     ...(options?.config ? { config: options.config } : {}),
@@ -105,10 +106,11 @@ export function resolveAgentCredentialsForDiscovery(
           ...storeOptions,
           ...(options?.readOnly === true ? { readOnly: true } : {}),
         });
-  const credentials = resolveAgentCredentialMapFromStore(store, {
+  const selection = resolveAgentCredentialSelectionFromStore(store, {
     includeSecretRefPlaceholders: options?.readOnly === true,
     config: options?.config,
   });
+  const { credentials } = selection;
   const ambientCredentials =
     options?.ambientCredentials ??
     resolveAmbientAgentCredentialsForDiscovery({
@@ -124,5 +126,13 @@ export function resolveAgentCredentialsForDiscovery(
     // Ambient auth is a lifecycle-owned fallback. Agent-local profiles remain authoritative.
     credentials[provider] = credential;
   }
-  return credentials;
+  return selection;
+}
+
+/** Resolves agent credentials from auth profiles, env, and synthetic auth hooks. */
+export function resolveAgentCredentialsForDiscovery(
+  agentDir: string,
+  options?: DiscoverAuthStorageOptions,
+): AgentCredentialMap {
+  return resolveAgentCredentialSelectionForDiscovery(agentDir, options).credentials;
 }

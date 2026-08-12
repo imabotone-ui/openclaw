@@ -4,6 +4,7 @@ import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 type CreateStaticCatalogResolver =
   typeof import("./embedded-agent-runner/model.static-catalog.js").createBundledStaticCatalogModelResolver;
 type StaticCatalogResolver = ReturnType<CreateStaticCatalogResolver>;
+type DiscoverAuthStorage = typeof import("./agent-model-discovery.js").discoverAuthStorage;
 type RunPreparedModelCatalogWorker =
   typeof import("./prepared-model-catalog-worker.js").runPreparedModelCatalogWorker;
 
@@ -44,7 +45,9 @@ const mocks = vi.hoisted(() => {
     metadataSnapshot,
     resolvePluginMetadataSnapshot: vi.fn(() => metadataSnapshot),
     resolveAmbientCredentials: vi.fn((..._args: unknown[]) => ({})),
-    discoverAuthStorage: vi.fn(() => authStorage),
+    discoverAuthStorage: vi.fn<DiscoverAuthStorage>(
+      () => authStorage as unknown as ReturnType<DiscoverAuthStorage>,
+    ),
     discoverModels: vi.fn(() => modelRegistry),
     ensureOpenClawModelsJson: vi.fn(
       async (_config: unknown, _agentDir: unknown, _options?: unknown) => ({
@@ -110,11 +113,17 @@ vi.mock("./prepared-model-catalog-worker.js", () => ({
   createPreparedModelCatalogWorkerInput: ({
     agentFacts,
   }: {
-    agentFacts: { input: unknown; credentials: unknown; providerIds: unknown };
+    agentFacts: {
+      input: unknown;
+      credentials: unknown;
+      credentialProfileIds: unknown;
+      providerIds: unknown;
+    };
   }) => ({
     generationFingerprint: "test-generation",
     input: agentFacts.input,
     credentials: agentFacts.credentials,
+    profileIds: agentFacts.credentialProfileIds,
     providerIds: agentFacts.providerIds,
   }),
   runPreparedModelCatalogWorker: (...args: Parameters<RunPreparedModelCatalogWorker>) =>
@@ -132,6 +141,10 @@ vi.mock("./agent-auth-discovery.js", () => ({
 }));
 
 vi.mock("./agent-model-discovery.js", () => ({
+  discoverAuthStorageSelection: (...args: Parameters<DiscoverAuthStorage>) => ({
+    authStorage: mocks.discoverAuthStorage(...args),
+    profileIds: {},
+  }),
   discoverAuthStorage: mocks.discoverAuthStorage,
   discoverModels: mocks.discoverModels,
   discoverModelsFromCapturedSources: mocks.discoverModels,

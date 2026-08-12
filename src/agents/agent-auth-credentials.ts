@@ -22,6 +22,7 @@ type AgentOAuthCredential = {
 /** Credential value shape consumed by agent runtimes after auth-profile normalization. */
 type AgentCredential = AgentApiKeyCredential | AgentOAuthCredential;
 export type AgentCredentialMap = Record<string, AgentCredential>;
+export type AgentCredentialProfileIds = Record<string, string>;
 export type PreparedAgentCredentialModes = Readonly<Record<string, "api_key" | "oauth" | "token">>;
 
 type ResolveAgentCredentialMapOptions = {
@@ -125,11 +126,12 @@ function convertAuthProfileCredentialToAgent(
 }
 
 /** Build one canonically selected credential per normalized provider. */
-export function resolveAgentCredentialMapFromStore(
+export function resolveAgentCredentialSelectionFromStore(
   store: AuthProfileStore,
   options?: ResolveAgentCredentialMapOptions,
-): AgentCredentialMap {
+): { credentials: AgentCredentialMap; profileIds: AgentCredentialProfileIds } {
   const credentials: AgentCredentialMap = {};
+  const profileIds: AgentCredentialProfileIds = {};
   for (const credential of Object.values(store.profiles)) {
     const provider = normalizeProviderId(credential.provider ?? "");
     if (!provider) {
@@ -140,13 +142,13 @@ export function resolveAgentCredentialMapFromStore(
     }
     // Discovery must not grow a second auth policy: explicit order, provider
     // aliases, eligibility, and automatic preference all belong to this resolver.
-    const profileIds = resolveAuthProfileOrder({
+    const orderedProfileIds = resolveAuthProfileOrder({
       cfg: options?.config,
       store,
       provider,
       ...(options?.includeSecretRefPlaceholders === true ? { readinessMode: "read-only" } : {}),
     });
-    for (const profileId of profileIds) {
+    for (const profileId of orderedProfileIds) {
       const profile = store.profiles[profileId];
       if (!profile) {
         continue;
@@ -154,9 +156,18 @@ export function resolveAgentCredentialMapFromStore(
       const converted = convertAuthProfileCredentialToAgent(profile, options);
       if (converted) {
         credentials[provider] = converted;
+        profileIds[provider] = profileId;
         break;
       }
     }
   }
-  return credentials;
+  return { credentials, profileIds };
+}
+
+/** Build one canonically selected credential per normalized provider. */
+export function resolveAgentCredentialMapFromStore(
+  store: AuthProfileStore,
+  options?: ResolveAgentCredentialMapOptions,
+): AgentCredentialMap {
+  return resolveAgentCredentialSelectionFromStore(store, options).credentials;
 }

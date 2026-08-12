@@ -15,14 +15,17 @@ import { AuthStorage } from "./sessions/auth-storage.js";
 
 function projectWorkerAuthStore(
   credentials: PreparedModelCatalogWorkerInput["credentials"],
+  profileIds: PreparedModelCatalogWorkerInput["profileIds"],
 ): AuthProfileStore {
+  // Only selected stored profiles regain profile identity. Ambient credentials stay in the
+  // prepared credential map so the worker cannot misreport env/config auth as a profile.
   return {
     version: 1,
     profiles: Object.fromEntries(
-      Object.entries(credentials).map(([provider, credential]) => [
-        `${provider}:default`,
-        { ...credential, provider },
-      ]),
+      Object.entries(credentials).flatMap(([provider, credential]) => {
+        const profileId = profileIds[provider];
+        return profileId ? [[profileId, { ...credential, provider }]] : [];
+      }),
     ),
   };
 }
@@ -40,11 +43,13 @@ export async function runPreparedModelCatalogWorkerInput(
       ...agentFacts,
       templateAuthStorage: AuthStorage.inMemory({ ...value.credentials }),
       credentials: value.credentials,
+      credentialProfileIds: value.profileIds,
       providerIds: [...value.providerIds],
     };
     const reconstructedFingerprint = fingerprintPreparedModelCatalogGeneration({
       input: value.input,
       credentials: value.credentials,
+      profileIds: value.profileIds,
       providerIds: value.providerIds,
       pluginMetadataSnapshot: prepared.pluginGeneration.pluginMetadataSnapshot,
     });
@@ -56,7 +61,7 @@ export async function runPreparedModelCatalogWorkerInput(
       prepared.pluginGeneration,
       "live",
       false,
-      { authStore: projectWorkerAuthStore(value.credentials) },
+      { authStore: projectWorkerAuthStore(value.credentials, value.profileIds) },
     );
     const facts = await prepareFullCatalogFacts(
       exactAgentFacts,

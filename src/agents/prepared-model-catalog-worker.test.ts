@@ -21,6 +21,7 @@ describe("prepared model catalog worker", () => {
     const common = {
       input,
       credentials: {},
+      profileIds: {},
       providerIds: [],
       pluginMetadataSnapshot: {
         policyHash: "test-policy",
@@ -64,6 +65,9 @@ describe("prepared model catalog worker", () => {
           } as never,
           unrelated: { type: "api_key", key: "unrelated-key" },
         },
+        credentialProfileIds: {
+          canonical: "canonical:named",
+        },
         providerIds: ["provider-alias", "direct"],
         configuredModelRefs: [],
         configuredRuntimeModels: [],
@@ -94,6 +98,7 @@ describe("prepared model catalog worker", () => {
       },
       direct: { type: "api_key", key: "selected-key" },
     });
+    expect(workerInput.profileIds).toEqual({ canonical: "canonical:named" });
   });
 
   it("rejects a timed-out exact discovery instead of returning an empty or partial catalog", async () => {
@@ -108,6 +113,7 @@ describe("prepared model catalog worker", () => {
           skipCredentials: true,
         },
         credentials: {},
+        profileIds: {},
         providerIds: [],
       },
       isCurrent: () => true,

@@ -8,7 +8,7 @@ const storeMocks = vi.hoisted(() => ({
 }));
 
 const credentialMocks = vi.hoisted(() => ({
-  resolveAgentCredentialMapFromStore: vi.fn(() => ({})),
+  resolveAgentCredentialSelectionFromStore: vi.fn(() => ({ credentials: {}, profileIds: {} })),
 }));
 
 const discoveryCoreMocks = vi.hoisted(() => ({
@@ -41,7 +41,10 @@ import { externalCliDiscoveryForProviders } from "./auth-profiles/external-cli-d
 describe("resolveAgentCredentialsForDiscovery external CLI scoping", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    credentialMocks.resolveAgentCredentialMapFromStore.mockReturnValue({});
+    credentialMocks.resolveAgentCredentialSelectionFromStore.mockReturnValue({
+      credentials: {},
+      profileIds: {},
+    });
   });
 
   it("threads scoped external CLI discovery into writable auth store loading", () => {
@@ -87,8 +90,9 @@ describe("resolveAgentCredentialsForDiscovery external CLI scoping", () => {
   });
 
   it("merges prepared ambient credentials without repeating ambient discovery", () => {
-    credentialMocks.resolveAgentCredentialMapFromStore.mockReturnValue({
-      fireworks: { type: "api_key", key: "agent-key" },
+    credentialMocks.resolveAgentCredentialSelectionFromStore.mockReturnValue({
+      credentials: { fireworks: { type: "api_key", key: "agent-key" } },
+      profileIds: { fireworks: "fireworks:named" },
     });
 
     const credentials = resolveAgentCredentialsForDiscovery("/tmp/openclaw-agent", {

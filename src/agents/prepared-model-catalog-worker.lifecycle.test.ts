@@ -70,6 +70,7 @@ describe("prepared model catalog worker lifecycle", () => {
         generationFingerprint: "generation",
         input: { agentDir: "/tmp/agent", config: {}, env: {}, skipCredentials: true },
         credentials: {},
+        profileIds: {},
         providerIds: [],
       },
       isCurrent: () => true,

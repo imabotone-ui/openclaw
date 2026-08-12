@@ -17,6 +17,7 @@ import { startSerializedSnapshotBuild } from "./prepared-model-runtime.build.js"
 
 const PROVIDER_ID = "worker-catalog-fixture";
 const PLUGIN_ID = "worker-catalog-fixture";
+const PROFILE_ID = `${PROVIDER_ID}:named`;
 const MATERIALIZED_SECRET = "materialized-worker-secret-not-real";
 const UNRELATED_SECRET = "unrelated-worker-secret-not-real";
 const tempDirs = useAutoCleanupTempDirTracker((cleanup) => {
@@ -44,6 +45,7 @@ module.exports = {
       catalog: {
         run: async (context) => {
           const hasAuth = context.resolveProviderApiKey(${JSON.stringify(PROVIDER_ID)}).apiKey === ${JSON.stringify(MATERIALIZED_SECRET)};
+          const hasProfile = context.resolveProviderAuth(${JSON.stringify(PROVIDER_ID)}).profileId === ${JSON.stringify(PROFILE_ID)};
           return {
             provider: {
               baseUrl: "https://worker-catalog.invalid/v1",
@@ -52,6 +54,7 @@ module.exports = {
               models: [
                 { id: "sqlite-model", name: "SQLite model" },
                 { id: \`catalog-auth-\${hasAuth}\`, name: "Catalog auth proof" },
+                { id: \`catalog-profile-\${hasProfile}\`, name: "Catalog profile proof" },
               ],
             },
           };
@@ -112,6 +115,7 @@ async function createStaticSnapshot(params: { spinMs: number }) {
   };
   const config = {
     agents: { defaults: { model: `${PROVIDER_ID}/sqlite-model` } },
+    auth: { order: { [PROVIDER_ID]: [PROFILE_ID] } },
     plugins: {
       allow: [PLUGIN_ID],
       load: { paths: [pluginFile] },
@@ -124,11 +128,16 @@ async function createStaticSnapshot(params: { spinMs: number }) {
       store: {
         version: 1,
         profiles: {
-          [`${PROVIDER_ID}:default`]: {
+          [PROFILE_ID]: {
             type: "api_key",
             provider: PROVIDER_ID,
             key: MATERIALIZED_SECRET,
             keyRef: { source: "env", provider: "default", id: "FIXTURE_SECRET_REF" },
+          },
+          [`${PROVIDER_ID}:default`]: {
+            type: "api_key",
+            provider: PROVIDER_ID,
+            key: "unselected-worker-secret-not-real",
           },
           "unrelated-provider:default": {
             type: "api_key",
@@ -202,6 +211,9 @@ describe("prepared model catalog worker boundary", () => {
     );
     expect(catalog?.entries).toContainEqual(
       expect.objectContaining({ provider: PROVIDER_ID, id: "catalog-auth-true" }),
+    );
+    expect(catalog?.entries).toContainEqual(
+      expect.objectContaining({ provider: PROVIDER_ID, id: "catalog-profile-true" }),
     );
     await expect(fixture.snapshot.loadFullModelCatalog?.()).resolves.toBe(catalog);
     expect(fs.readFileSync(fixture.marker, "utf8")).toBe("start\ndone\n");
