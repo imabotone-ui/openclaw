@@ -10,6 +10,12 @@ import {
 import type { SecretRefSource } from "../config/types.secrets.js";
 import { listOpenClawPluginManifestMetadata } from "../plugins/manifest-metadata-scan.js";
 import { listKnownProviderEnvApiKeyNames } from "./model-auth-env-vars.js";
+import {
+  AGENT_SECRET_REF_CONFIGURED_MARKER,
+  NON_ENV_SECRETREF_MARKER,
+} from "./model-auth-marker-values.js";
+
+export { NON_ENV_SECRETREF_MARKER } from "./model-auth-marker-values.js";
 
 /** @deprecated MiniMax provider-owned marker; do not use from third-party plugins. */
 export const MINIMAX_OAUTH_MARKER = "minimax-oauth";
@@ -23,8 +29,6 @@ export const CUSTOM_LOCAL_AUTH_MARKER = "custom-local";
 export const CODEX_APP_SERVER_AUTH_MARKER = "codex-app-server";
 /** Marker for Google Vertex credentials resolved outside plain API-key env vars. */
 export const GCP_VERTEX_CREDENTIALS_MARKER = "gcp-vertex-credentials";
-/** Marker for a secret-ref-managed credential that is not stored as an env var. */
-export const NON_ENV_SECRETREF_MARKER = "secretref-managed"; // pragma: allowlist secret
 /** Prefix for secret-ref header markers that name an env-backed source. */
 export const SECRETREF_ENV_HEADER_MARKER_PREFIX = "secretref-env:"; // pragma: allowlist secret
 
@@ -34,6 +38,7 @@ const AWS_SDK_ENV_MARKERS = new Set([
   "AWS_PROFILE",
 ]);
 const CORE_NON_SECRET_API_KEY_MARKERS = [
+  AGENT_SECRET_REF_CONFIGURED_MARKER,
   CUSTOM_LOCAL_AUTH_MARKER,
   CODEX_APP_SERVER_AUTH_MARKER,
   GCP_VERTEX_CREDENTIALS_MARKER,

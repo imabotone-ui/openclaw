@@ -121,8 +121,8 @@ describeControlUiE2e("Control UI Models mocked Gateway E2E", () => {
       await expect
         .poll(async () => readiness.textContent())
         .toContain("Connect a verified AI model");
-      await expect.poll(async () => readiness.textContent()).toContain("No models available");
-      await expect.poll(async () => openaiCard.textContent()).toContain("Signed in");
+      await expect.poll(async () => readiness.textContent()).toContain("Model required");
+      await expect.poll(async () => openaiCard.textContent()).toContain("Credentials configured");
       expect(
         (await gateway.getRequests("models.list")).filter(
           (request) => (request.params as { view?: string } | undefined)?.view === "all",
@@ -279,7 +279,7 @@ describeControlUiE2e("Control UI Models mocked Gateway E2E", () => {
         .poll(async () => claudeCard.locator(".settings-row__desc").first().textContent())
         .toContain("anthropic");
       await expect.poll(async () => claudeCard.textContent()).toContain("Max 20x");
-      await expect.poll(async () => claudeCard.textContent()).toContain("Ready");
+      await expect.poll(async () => claudeCard.textContent()).toContain("Credentials configured");
       await expect.poll(async () => claudeCard.textContent()).toContain("$4.20");
       await claudeCard.locator(".provider-usage-progress").first().waitFor();
 

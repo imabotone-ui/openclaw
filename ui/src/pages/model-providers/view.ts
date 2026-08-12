@@ -30,7 +30,7 @@ import type {
   ProviderOption,
 } from "./data.ts";
 import { renderDefaultModels } from "./default-models-view.ts";
-import { hasValidProviderSignIn, renderProviderStatus } from "./view-status.ts";
+import { hasVerifiedProvider, renderProviderStatus } from "./view-status.ts";
 
 export type ModelProviderRowMessage = {
   kind: "success" | "error";
@@ -553,7 +553,7 @@ function renderAddProvider(props: ModelProvidersViewProps) {
 }
 
 function renderModelReadiness(props: ModelProvidersViewProps) {
-  const signedIn = props.cards.some(hasValidProviderSignIn);
+  const signedIn = props.cards.some(hasVerifiedProvider);
   return html`
     <div class="model-providers__setup" data-model-readiness="model-required">
       ${renderSettingsSection(

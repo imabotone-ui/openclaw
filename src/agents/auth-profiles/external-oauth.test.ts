@@ -6,7 +6,7 @@
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderExternalAuthProfile } from "../../plugins/types.js";
-import { resolveAgentCredentialMapFromStore } from "../agent-auth-credentials.js";
+import { resolveAgentCredentialSelectionFromStore } from "../agent-auth-credentials.js";
 import { addEnvBackedAgentCredentials } from "../agent-auth-discovery-core.js";
 import { overlayExternalAuthProfiles } from "./external-auth.js";
 import { testing } from "./external-auth.test-support.js";
@@ -222,7 +222,9 @@ describe("auth external oauth helpers", () => {
       config: cfg,
       externalCliProviderIds: ["openai"],
     });
-    const ambientOnly = resolveAgentCredentialMapFromStore(store, { config: cfg });
+    const ambientOnly = resolveAgentCredentialSelectionFromStore(store, {
+      config: cfg,
+    }).credentials;
     const credentials = addEnvBackedAgentCredentials(ambientOnly, {
       config: cfg,
       env: { OPENAI_API_KEY: "env-api-key" },

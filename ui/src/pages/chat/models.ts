@@ -28,9 +28,15 @@ export async function loadModels(
 ): Promise<ModelCatalogEntry[]> {
   const cache = modelCatalogCacheFor(client);
   const agentId = opts?.agentId?.trim() ?? "";
-  const cacheKey = `${agentId}\0${opts?.preparedOnly ? "prepared" : "exact"}`;
+  const preparedCacheKey = `${agentId}\0prepared`;
+  const exactCacheKey = `${agentId}\0exact`;
+  const cacheKey = opts?.preparedOnly ? preparedCacheKey : exactCacheKey;
   const cached = cache.get(cacheKey);
   const now = Date.now();
+  const exact = opts?.preparedOnly ? cache.get(exactCacheKey) : undefined;
+  if (!opts?.refresh && exact?.models && exact.expiresAt > now) {
+    return exact.models;
+  }
   if (!opts?.refresh && cached?.models && cached.expiresAt > now) {
     return cached.models;
   }
@@ -49,11 +55,23 @@ export async function loadModels(
   )
     .then((result) => {
       const latest = cache.get(cacheKey);
+      if (latest?.inFlight && latest.inFlight !== inFlight) {
+        return latest.inFlight;
+      }
+      if (latest && latest.inFlight !== inFlight) {
+        return latest.models;
+      }
       if (!latest || latest.inFlight === inFlight) {
+        const expiresAt = result.fresh ? Date.now() + MODEL_CATALOG_CACHE_TTL_MS : 0;
         cache.set(cacheKey, {
-          expiresAt: result.fresh ? Date.now() + MODEL_CATALOG_CACHE_TTL_MS : 0,
+          expiresAt,
           models: result.models,
         });
+        // Exact discovery is authoritative for the same configured view. Promote it over the
+        // prepared slot so a later or already-running prepared request cannot revert the UI.
+        if (result.fresh && !opts?.preparedOnly) {
+          cache.set(preparedCacheKey, { expiresAt, models: result.models });
+        }
       }
       return result.models;
     })

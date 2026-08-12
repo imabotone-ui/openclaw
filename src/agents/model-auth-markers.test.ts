@@ -5,6 +5,7 @@
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { withEnv, withEnvAsync } from "../test-utils/env.js";
+import { AGENT_SECRET_REF_CONFIGURED_MARKER } from "./model-auth-marker-values.js";
 
 const BUNDLED_PLUGINS_DIR = fileURLToPath(new URL("../../extensions/", import.meta.url));
 const PLUGIN_MANIFEST_ENV_KEYS = [
@@ -64,6 +65,7 @@ describe("model auth markers", () => {
   it("recognizes explicit non-secret markers", () => {
     withEnv(cleanPluginManifestEnv(), () => {
       expect(isNonSecretApiKeyMarker(NON_ENV_SECRETREF_MARKER)).toBe(true);
+      expect(isNonSecretApiKeyMarker(AGENT_SECRET_REF_CONFIGURED_MARKER)).toBe(true);
       expect(isNonSecretApiKeyMarker("secretref-env:OPENAI_API_KEY")).toBe(true);
       expect(isNonSecretApiKeyMarker(resolveOAuthApiKeyMarker("chutes"))).toBe(true);
       expect(isNonSecretApiKeyMarker("ollama-local")).toBe(true);

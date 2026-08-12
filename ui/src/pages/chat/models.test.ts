@@ -83,6 +83,31 @@ describe("loadModels", () => {
     expect(request).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps exact discovery authoritative over a late prepared response", async () => {
+    const prepared = [{ id: "prepared", name: "Prepared", provider: "openai" }];
+    const exact = [{ id: "exact", name: "Exact", provider: "openai" }];
+    let releasePrepared: (() => void) | undefined;
+    const preparedGate = new Promise<void>((resolve) => {
+      releasePrepared = resolve;
+    });
+    const request = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        await preparedGate;
+        return { models: prepared };
+      })
+      .mockImplementationOnce(async () => ({ models: exact }));
+    const client = { request } as unknown as GatewayBrowserClient;
+
+    const preparedPromise = loadModels(client, { preparedOnly: true });
+    expect(await loadModels(client, { refresh: true })).toEqual(exact);
+    releasePrepared?.();
+
+    expect(await preparedPromise).toEqual(exact);
+    expect(await loadModels(client, { preparedOnly: true })).toEqual(exact);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
   it("coalesces concurrent refreshes without reusing a completed refresh", async () => {
     let releaseRefresh: (() => void) | undefined;
     const refreshGate = new Promise<void>((resolve) => {

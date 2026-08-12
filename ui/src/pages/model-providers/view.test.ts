@@ -524,7 +524,7 @@ describe("renderModelProviders", () => {
     expect(text(provider)).toContain("Default profile");
   });
 
-  it("puts model recovery first when credentials expose no selectable models", () => {
+  it("keeps unverified credentials neutral when no selectable models exist", () => {
     const onOpenModelSetup = vi.fn();
     const container = mount(
       props({
@@ -544,12 +544,14 @@ describe("renderModelProviders", () => {
 
     const readiness = container.querySelector('[data-model-readiness="model-required"]');
     expect(text(readiness)).toContain("Connect a verified AI model");
-    expect(text(readiness)).toContain("No models available");
-    expect(text(readiness)).toContain("Choose another provider");
+    expect(text(readiness)).toContain("Choose a provider and verify the model");
+    expect(text(readiness)).toContain("Model required");
     expect(container.querySelector(".model-providers__defaults")).toBeNull();
-    expect(text(container.querySelector('[data-provider-id="openai"]'))).toContain("Signed in");
+    expect(text(container.querySelector('[data-provider-id="openai"]'))).toContain(
+      "Credentials configured",
+    );
 
-    button(readiness!, "Choose another provider")?.click();
+    button(readiness!, "Connect a verified AI model")?.click();
     expect(onOpenModelSetup).toHaveBeenCalledOnce();
   });
 
@@ -589,6 +591,21 @@ describe("renderModelProviders", () => {
     const provider = container.querySelector('[data-provider-id="openai"]');
     expect(text(provider)).toContain("API key");
     expect(text(provider)).not.toContain("Ready");
+  });
+
+  it("reports ready only after a positive catalog outcome", () => {
+    const container = mount(
+      props({
+        cards: [
+          card({
+            auth: { kind: "ok", profileCount: 1 },
+            catalogStatus: "ready",
+          }),
+        ],
+      }),
+    );
+
+    expect(text(container.querySelector('[data-provider-id="openai"]'))).toContain("Ready");
   });
 
   it("starts provider setup before showing disabled model controls", () => {
@@ -744,7 +761,7 @@ describe("renderModelProviders", () => {
     );
 
     const provider = container.querySelector('[data-provider-id="openai"]');
-    expect(text(provider)).toContain("Signed in");
+    expect(text(provider)).toContain("Credentials configured");
     expect(text(provider)).toContain("No models available");
     expect(text(provider)).not.toContain("Connection failed");
   });

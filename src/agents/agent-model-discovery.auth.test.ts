@@ -5,7 +5,7 @@ import path from "node:path";
 import { MAX_DATE_TIMESTAMP_MS } from "@openclaw/normalization-core/number-coercion";
 import { describe, expect, it, vi } from "vitest";
 import {
-  resolveAgentCredentialMapFromStore,
+  resolveAgentCredentialSelectionFromStore,
   resolveUsableAgentCredentialModes,
 } from "./agent-auth-credentials.js";
 import { addEnvBackedAgentCredentials } from "./agent-auth-discovery-core.js";
@@ -70,7 +70,7 @@ function writeAuthProfilesSqlite(agentDir: string, store: AuthProfileStore): voi
 
 describe("discoverAuthStorage", () => {
   it("converts runtime auth profiles into agent discovery credentials", () => {
-    const credentials = resolveAgentCredentialMapFromStore({
+    const credentials = resolveAgentCredentialSelectionFromStore({
       version: 1,
       profiles: {
         "openrouter:default": {
@@ -91,15 +91,15 @@ describe("discoverAuthStorage", () => {
           expires: Date.now() + 60_000,
         },
       },
-    });
+    }).credentials;
 
     expect(credentials.openrouter).toEqual({
       type: "api_key",
       key: "sk-or-v1-runtime",
     });
     expect(credentials.anthropic).toEqual({
-      type: "api_key",
-      key: "sk-ant-runtime",
+      type: "token",
+      token: "sk-ant-runtime",
     });
     const codexCredential = credentials["openai"] as
       | { type?: string; access?: string; refresh?: string }
@@ -108,7 +108,7 @@ describe("discoverAuthStorage", () => {
     expect(codexCredential?.access).toBe("oauth-access");
     expect(codexCredential?.refresh).toBe("oauth-refresh");
     expect(resolveUsableAgentCredentialModes(credentials)).toEqual({
-      anthropic: "api_key",
+      anthropic: "token",
       openai: "oauth",
       openrouter: "api_key",
     });
@@ -121,7 +121,7 @@ describe("discoverAuthStorage", () => {
   });
 
   it("drops runtime auth profiles with out-of-range expiry values", () => {
-    const credentials = resolveAgentCredentialMapFromStore({
+    const credentials = resolveAgentCredentialSelectionFromStore({
       version: 1,
       profiles: {
         "anthropic:bad-token-expiry": {
@@ -138,14 +138,14 @@ describe("discoverAuthStorage", () => {
           expires: MAX_DATE_TIMESTAMP_MS + 1,
         },
       },
-    });
+    }).credentials;
 
     expect(credentials.anthropic).toBeUndefined();
     expect(credentials.openai).toBeUndefined();
   });
 
   it("keeps expired OAuth when it is the sole profile for a provider", () => {
-    const resolved = resolveAgentCredentialMapFromStore({
+    const resolved = resolveAgentCredentialSelectionFromStore({
       version: 1,
       profiles: {
         "openai:sole-expired": {
@@ -156,7 +156,7 @@ describe("discoverAuthStorage", () => {
           expires: Date.now() - 3600_000,
         },
       },
-    });
+    }).credentials;
 
     expect(resolved.openai).toEqual({
       type: "oauth",
@@ -167,7 +167,7 @@ describe("discoverAuthStorage", () => {
   });
 
   it("uses canonical mode and expiry ordering instead of profile insertion order", () => {
-    const resolved = resolveAgentCredentialMapFromStore({
+    const resolved = resolveAgentCredentialSelectionFromStore({
       version: 1,
       profiles: {
         "openai:key": {
@@ -190,7 +190,7 @@ describe("discoverAuthStorage", () => {
           expires: Date.now() + 3600_000,
         },
       },
-    });
+    }).credentials;
 
     expect(resolved.openai).toEqual({
       type: "oauth",
@@ -235,7 +235,7 @@ describe("discoverAuthStorage", () => {
   });
 
   it("keeps keyRef and tokenRef profiles visible only for read-only agent discovery", () => {
-    const credentials = resolveAgentCredentialMapFromStore({
+    const credentials = resolveAgentCredentialSelectionFromStore({
       version: 1,
       profiles: {
         "openrouter:default": {
@@ -255,8 +255,8 @@ describe("discoverAuthStorage", () => {
           expires: Date.now() - 1_000,
         },
       },
-    });
-    const discoveryCredentials = resolveAgentCredentialMapFromStore(
+    }).credentials;
+    const discoveryCredentials = resolveAgentCredentialSelectionFromStore(
       {
         version: 1,
         profiles: {
@@ -279,12 +279,15 @@ describe("discoverAuthStorage", () => {
         },
       },
       { includeSecretRefPlaceholders: true },
-    );
+    ).credentials;
 
     expect(credentials.openrouter).toBeUndefined();
     expect(credentials.anthropic).toBeUndefined();
     expect(discoveryCredentials.openrouter?.type).toBe("api_key");
-    expect(discoveryCredentials.anthropic?.type).toBe("api_key");
+    expect(discoveryCredentials.anthropic).toMatchObject({
+      type: "token",
+      token: "openclaw-secret-ref-configured",
+    });
     expect(discoveryCredentials.expired).toBeUndefined();
     expect(resolveUsableAgentCredentialModes(discoveryCredentials)).toEqual({});
   });

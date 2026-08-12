@@ -26,6 +26,7 @@ export type ModelProvidersData = {
   authStatus: ModelAuthStatusResult | null;
   models: ModelCatalogEntry[] | null;
   providerOutcomes: ModelCatalogProviderOutcome[];
+  verificationFailed: boolean;
   config: Record<string, unknown> | null;
   providerUsage: UsageSummary | null;
   costByProvider: SessionModelUsage[] | null;
@@ -41,6 +42,7 @@ export const EMPTY_MODEL_PROVIDERS_DATA: ModelProvidersData = {
   authStatus: null,
   models: null,
   providerOutcomes: [],
+  verificationFailed: false,
   config: null,
   providerUsage: null,
   costByProvider: null,
@@ -87,10 +89,11 @@ export async function loadModelProvidersData(
       opts?.refresh
         ? request<ModelProvidersCatalogResult>("models.list", {
             view: "all",
+            ...(opts.agentId ? { agentId: opts.agentId } : {}),
           })
-            .then((result) => result ?? null)
-            .catch(() => null)
-        : Promise.resolve(null),
+            .then((result) => ({ ok: true as const, result: result ?? null }))
+            .catch((error: unknown) => ({ ok: false as const, error }))
+        : Promise.resolve({ ok: true as const, result: null }),
       request<ConfigSnapshot>("config.get", {})
         .then((snapshot) => resolveEditableSnapshotConfig(snapshot))
         .catch(() => null),
@@ -108,7 +111,8 @@ export async function loadModelProvidersData(
     authStatus:
       authStatus.ok && Array.isArray(authStatus.result?.providers) ? authStatus.result : null,
     models,
-    providerOutcomes: catalogResult?.providerOutcomes ?? [],
+    providerOutcomes: catalogResult.ok ? (catalogResult.result?.providerOutcomes ?? []) : [],
+    verificationFailed: !catalogResult.ok,
     config,
     providerUsage,
     costByProvider,

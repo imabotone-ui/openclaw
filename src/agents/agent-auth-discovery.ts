@@ -128,11 +128,3 @@ export function resolveAgentCredentialSelectionForDiscovery(
   }
   return selection;
 }
-
-/** Resolves agent credentials from auth profiles, env, and synthetic auth hooks. */
-export function resolveAgentCredentialsForDiscovery(
-  agentDir: string,
-  options?: DiscoverAuthStorageOptions,
-): AgentCredentialMap {
-  return resolveAgentCredentialSelectionForDiscovery(agentDir, options).credentials;
-}

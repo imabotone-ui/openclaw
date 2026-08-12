@@ -6,12 +6,14 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { coerceSecretRef } from "../config/types.secrets.js";
 import { resolveAuthProfileOrder } from "./auth-profiles/order.js";
 import type { AuthProfileCredential, AuthProfileStore } from "./auth-profiles/types.js";
+import { AGENT_SECRET_REF_CONFIGURED_MARKER } from "./model-auth-marker-values.js";
 import type { AuthStorageData } from "./sessions/auth-storage.js";
 
 // Converts auth-profile credentials into the compact credential map consumed by
 // agent runtimes. Secret refs can be represented by markers without reading
 // secret values.
 type AgentApiKeyCredential = { type: "api_key"; key: string };
+type AgentTokenCredential = { type: "token"; token: string; expires?: number };
 type AgentOAuthCredential = {
   type: "oauth";
   access: string;
@@ -20,7 +22,7 @@ type AgentOAuthCredential = {
 };
 
 /** Credential value shape consumed by agent runtimes after auth-profile normalization. */
-type AgentCredential = AgentApiKeyCredential | AgentOAuthCredential;
+type AgentCredential = AgentApiKeyCredential | AgentTokenCredential | AgentOAuthCredential;
 export type AgentCredentialMap = Record<string, AgentCredential>;
 export type AgentCredentialProfileIds = Record<string, string>;
 export type PreparedAgentCredentialModes = Readonly<Record<string, "api_key" | "oauth" | "token">>;
@@ -29,8 +31,6 @@ type ResolveAgentCredentialMapOptions = {
   includeSecretRefPlaceholders?: boolean;
   config?: OpenClawConfig;
 };
-
-const AGENT_SECRET_REF_CONFIGURED_MARKER = "openclaw-secret-ref-configured";
 
 /** Records only credential modes whose secret material is usable by a prepared runtime owner. */
 export function resolveUsableAgentCredentialModes(
@@ -51,6 +51,7 @@ export function resolveUsableAgentCredentialModes(
     } else if (
       credential.type === "token" &&
       credential.token &&
+      credential.token !== AGENT_SECRET_REF_CONFIGURED_MARKER &&
       (credential.expires === undefined || credential.expires > Date.now())
     ) {
       modes[provider] = "token";
@@ -71,12 +72,20 @@ function hasConfiguredSecretRef(value: unknown): boolean {
 }
 
 function secretRefPlaceholder(
+  type: "api_key" | "token",
   options: ResolveAgentCredentialMapOptions | undefined,
+  expires?: number,
 ): AgentCredential | null {
-  if (options?.includeSecretRefPlaceholders === true) {
-    return { type: "api_key", key: AGENT_SECRET_REF_CONFIGURED_MARKER };
+  if (options?.includeSecretRefPlaceholders !== true) {
+    return null;
   }
-  return null;
+  return type === "token"
+    ? {
+        type,
+        token: AGENT_SECRET_REF_CONFIGURED_MARKER,
+        ...(expires !== undefined ? { expires } : {}),
+      }
+    : { type, key: AGENT_SECRET_REF_CONFIGURED_MARKER };
 }
 
 function convertAuthProfileCredentialToAgent(
@@ -88,23 +97,26 @@ function convertAuthProfileCredentialToAgent(
     if (!key) {
       // A configured secret ref proves the credential exists, but this converter
       // must not resolve or leak the actual secret value.
-      return hasConfiguredSecretRef(cred.keyRef) ? secretRefPlaceholder(options) : null;
+      return hasConfiguredSecretRef(cred.keyRef) ? secretRefPlaceholder("api_key", options) : null;
     }
     return { type: "api_key", key };
   }
 
   if (cred.type === "token") {
+    let expires: number | undefined;
     if (cred.expires !== undefined) {
-      const expires = asDateTimestampMs(cred.expires);
+      expires = asDateTimestampMs(cred.expires);
       if (expires === undefined || Date.now() >= expires) {
         return null;
       }
     }
     const token = normalizeOptionalString(cred.token) ?? "";
     if (!token) {
-      return hasConfiguredSecretRef(cred.tokenRef) ? secretRefPlaceholder(options) : null;
+      return hasConfiguredSecretRef(cred.tokenRef)
+        ? secretRefPlaceholder("token", options, expires)
+        : null;
     }
-    return { type: "api_key", key: token };
+    return { type: "token", token, ...(expires !== undefined ? { expires } : {}) };
   }
 
   if (cred.type === "oauth") {
@@ -162,12 +174,4 @@ export function resolveAgentCredentialSelectionFromStore(
     }
   }
   return { credentials, profileIds };
-}
-
-/** Build one canonically selected credential per normalized provider. */
-export function resolveAgentCredentialMapFromStore(
-  store: AuthProfileStore,
-  options?: ResolveAgentCredentialMapOptions,
-): AgentCredentialMap {
-  return resolveAgentCredentialSelectionFromStore(store, options).credentials;
 }

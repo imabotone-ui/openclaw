@@ -45,7 +45,9 @@ module.exports = {
       catalog: {
         run: async (context) => {
           const hasAuth = context.resolveProviderApiKey(${JSON.stringify(PROVIDER_ID)}).apiKey === ${JSON.stringify(MATERIALIZED_SECRET)};
-          const hasProfile = context.resolveProviderAuth(${JSON.stringify(PROVIDER_ID)}).profileId === ${JSON.stringify(PROFILE_ID)};
+          const profileAuth = context.resolveProviderAuth(${JSON.stringify(PROVIDER_ID)});
+          const hasProfile = profileAuth.profileId === ${JSON.stringify(PROFILE_ID)};
+          const hasTokenMode = profileAuth.mode === "token";
           return {
             provider: {
               baseUrl: "https://worker-catalog.invalid/v1",
@@ -55,6 +57,7 @@ module.exports = {
                 { id: "sqlite-model", name: "SQLite model" },
                 { id: \`catalog-auth-\${hasAuth}\`, name: "Catalog auth proof" },
                 { id: \`catalog-profile-\${hasProfile}\`, name: "Catalog profile proof" },
+                { id: \`catalog-token-\${hasTokenMode}\`, name: "Catalog token proof" },
               ],
             },
           };
@@ -129,10 +132,10 @@ async function createStaticSnapshot(params: { spinMs: number }) {
         version: 1,
         profiles: {
           [PROFILE_ID]: {
-            type: "api_key",
+            type: "token",
             provider: PROVIDER_ID,
-            key: MATERIALIZED_SECRET,
-            keyRef: { source: "env", provider: "default", id: "FIXTURE_SECRET_REF" },
+            token: MATERIALIZED_SECRET,
+            tokenRef: { source: "env", provider: "default", id: "FIXTURE_SECRET_REF" },
           },
           [`${PROVIDER_ID}:default`]: {
             type: "api_key",
@@ -214,6 +217,9 @@ describe("prepared model catalog worker boundary", () => {
     );
     expect(catalog?.entries).toContainEqual(
       expect.objectContaining({ provider: PROVIDER_ID, id: "catalog-profile-true" }),
+    );
+    expect(catalog?.entries).toContainEqual(
+      expect.objectContaining({ provider: PROVIDER_ID, id: "catalog-token-true" }),
     );
     await expect(fixture.snapshot.loadFullModelCatalog?.()).resolves.toBe(catalog);
     expect(fs.readFileSync(fixture.marker, "utf8")).toBe("start\ndone\n");

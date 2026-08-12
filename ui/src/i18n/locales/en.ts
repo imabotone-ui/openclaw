@@ -12,6 +12,7 @@ export const en: TranslationMap = {
     active: "Active",
     loading: "Loading…",
     refreshing: "Refreshing…",
+    verificationFailed: "Provider verification failed. Refresh and try again.",
     offline: "Offline",
     connect: "Connect",
     connected: "Connected",
@@ -3932,6 +3933,7 @@ export const en: TranslationMap = {
     emptySubtitle: "Sign in to a provider or add an API key, then refresh.",
     status: {
       ok: "Signed in",
+      configured: "Credentials configured",
       ready: "Ready",
       expiring: "Expiring",
       expired: "Expired",

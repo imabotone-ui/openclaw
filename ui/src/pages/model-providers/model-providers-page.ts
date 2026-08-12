@@ -628,7 +628,8 @@ export class ModelProvidersPage extends OpenClawLightDomElement {
       connected: gatewaySnapshot.phase === "connected",
       loading: gatewaySnapshot.phase === "connected" && this.data === null,
       refreshing: this.refreshTask.status === TaskStatus.PENDING,
-      error: data.error,
+      error:
+        data.error ?? (data.verificationFailed ? t("modelProviders.verificationFailed") : null),
       updatedAt: data.updatedAt,
       costDays: MODEL_PROVIDERS_COST_DAYS,
       credentialAgentLabel: selectedAgentLabel,

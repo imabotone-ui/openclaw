@@ -35,9 +35,10 @@ describe("loadModelProvidersData", () => {
       preparedOnly: true,
     });
     expect(result.providerOutcomes).toEqual([]);
+    expect(result.verificationFailed).toBe(false);
   });
 
-  it("scopes only credential status to the selected agent", async () => {
+  it("scopes credential and catalog verification to the selected agent", async () => {
     const request = vi.fn(async (method: string, _params?: unknown) => {
       switch (method) {
         case "models.authStatus":
@@ -63,7 +64,7 @@ describe("loadModelProvidersData", () => {
       agentId: "writer",
     });
     expect(request).toHaveBeenCalledWith("usage.status");
-    expect(request).toHaveBeenCalledWith("models.list", { view: "all" });
+    expect(request).toHaveBeenCalledWith("models.list", { view: "all", agentId: "writer" });
     const sessionUsageCall = request.mock.calls.find(([method]) => method === "sessions.usage");
     expect(sessionUsageCall?.[1]).not.toHaveProperty("agentId");
     expect(sessionUsageCall?.[1]).toHaveProperty("agentScope", "all");
@@ -96,5 +97,34 @@ describe("loadModelProvidersData", () => {
     expect(result.providerUsage).toEqual({ updatedAt: 1, providers: [] });
     expect(result.costByProvider).toEqual([]);
     expect(result.error).toBeNull();
+  });
+
+  it("surfaces an exact catalog verification failure", async () => {
+    const request = vi.fn(async (method: string, params?: unknown) => {
+      if (method === "models.list" && (params as { view?: string } | undefined)?.view === "all") {
+        throw new Error("catalog unavailable");
+      }
+      switch (method) {
+        case "models.authStatus":
+          return { ts: 1, providers: [] };
+        case "models.list":
+          return { models: [] };
+        case "config.get":
+          return { config: {}, hash: "hash" };
+        case "usage.status":
+          return { updatedAt: 1, providers: [] };
+        case "sessions.usage":
+          return { aggregates: { byProvider: [] } };
+        default:
+          return {};
+      }
+    });
+
+    const result = await loadModelProvidersData({ request } as unknown as GatewayBrowserClient, {
+      refresh: true,
+    });
+
+    expect(result.providerOutcomes).toEqual([]);
+    expect(result.verificationFailed).toBe(true);
   });
 });
