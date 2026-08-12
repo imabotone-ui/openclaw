@@ -5,18 +5,20 @@ import os from "node:os";
 import path from "node:path";
 import { App, type Receiver, type ReceiverEvent } from "@slack/bolt";
 import type { ChannelIngressQueue } from "openclaw/plugin-sdk/channel-outbound";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import type { PluginJsonValue } from "openclaw/plugin-sdk/plugin-entry";
 import {
   closeOpenClawStateDatabaseForTest,
   createChannelIngressQueueForTests,
 } from "openclaw/plugin-sdk/plugin-state-test-runtime";
+import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import {
   peekSystemEventEntries,
   resetSystemEventsForTest,
 } from "openclaw/plugin-sdk/system-event-runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createSlackMonitorContext } from "./context.js";
 import { registerSlackMemberEvents } from "./events/members.js";
-import { createSlackSystemEventTestHarness } from "./events/system-event-test-harness.js";
 import { createSlackDurableIngress, resolveSlackIngressTurnLifecycle } from "./ingress.js";
 
 type SlackIngressQueue = NonNullable<Parameters<typeof createSlackDurableIngress>[0]["queue"]>;
@@ -108,7 +110,7 @@ function createMemberEvent(type: "member_joined_channel" | "member_left_channel"
 function attachBoltMemberIngress(params: {
   queue: ChannelIngressQueue<SlackIngressPayload>;
   trackEvent: () => void;
-  resolveUserName?: (userId: string) => Promise<{ name?: string }>;
+  usersInfo?: App["client"]["users"]["info"];
   pollIntervalMs?: number;
 }) {
   const ingress = createSlackDurableIngress({
@@ -129,12 +131,58 @@ function attachBoltMemberIngress(params: {
     convoStore: false,
     ignoreSelf: false,
   });
-  const memberHarness = createSlackSystemEventTestHarness({ channelType: "channel" });
-  memberHarness.ctx.app = app;
-  if (params.resolveUserName) {
-    memberHarness.ctx.resolveUserName = params.resolveUserName;
-  }
-  registerSlackMemberEvents({ ctx: memberHarness.ctx, trackEvent: params.trackEvent });
+  vi.spyOn(app.client.conversations, "info").mockResolvedValue({
+    ok: true,
+    channel: { id: "C_TEST", name: "general", is_channel: true },
+  });
+  vi.spyOn(app.client.users, "info").mockImplementation(
+    params.usersInfo ??
+      (async () => ({
+        ok: true,
+        user: { id: "U_TEST", name: "alice" },
+      })),
+  );
+  const ctx = createSlackMonitorContext({
+    cfg: {} as OpenClawConfig,
+    accountId: "default",
+    botToken: "xoxb-test",
+    app,
+    runtime: {} as RuntimeEnv,
+    botUserId: "U_BOT",
+    botId: "B_BOT",
+    identityHealth: { lifecycle: "ready", lastError: null },
+    teamId: "T_TEST",
+    apiAppId: "A_TEST",
+    installationIdentity: { kind: "workspace", teamId: "T_TEST" },
+    historyLimit: 0,
+    sessionScope: "per-sender",
+    mainKey: "main",
+    dmEnabled: true,
+    dmPolicy: "open",
+    allowFrom: [],
+    allowNameMatching: false,
+    groupDmEnabled: true,
+    groupDmChannels: [],
+    defaultRequireMention: true,
+    groupPolicy: "open",
+    useAccessGroups: false,
+    reactionMode: "off",
+    reactionAllowlist: [],
+    replyToMode: "off",
+    slashCommand: {
+      enabled: false,
+      name: "openclaw",
+      sessionPrefix: "slack:slash",
+      ephemeral: true,
+    },
+    textLimit: 4000,
+    ackReactionScope: "group-mentions",
+    typingReaction: "",
+    mediaMaxBytes: 1,
+    threadHistoryScope: "thread",
+    threadInheritParent: false,
+  });
+  registerSlackMemberEvents({ ctx, trackEvent: params.trackEvent });
   return { ingress, receive: receiverHarness.receive };
 }
 
@@ -440,7 +488,11 @@ describe("Slack durable ingress", () => {
         await ingress.waitForIdle();
 
         expect(trackEvent).toHaveBeenCalledTimes(3);
-        expect(peekSystemEventEntries("agent:main:main").map((entry) => entry.contextKey)).toEqual([
+        expect(
+          peekSystemEventEntries("agent:main:slack:channel:c_test").map(
+            (entry) => entry.contextKey,
+          ),
+        ).toEqual([
           "slack:member:joined:c_test:u_test:ev-member-join-1",
           "slack:member:left:c_test:u_test:ev-member-left",
           "slack:member:joined:c_test:u_test:ev-member-join-2",
@@ -455,14 +507,14 @@ describe("Slack durable ingress", () => {
     await withQueue(async (queue) => {
       const trackEvent = vi.fn();
       let userLookupCount = 0;
-      const resolveUserName = async () => {
+      const usersInfo: App["client"]["users"]["info"] = async () => {
         userLookupCount += 1;
-        if (userLookupCount === 2) {
+        if (userLookupCount <= 2) {
           throw new Error("users.info temporarily unavailable");
         }
-        return { name: "alice" };
+        return { ok: true, user: { id: "U_TEST", name: "alice" } };
       };
-      const first = attachBoltMemberIngress({ queue, trackEvent, resolveUserName });
+      const first = attachBoltMemberIngress({ queue, trackEvent, usersInfo });
       first.ingress.start();
       let restarted: ReturnType<typeof attachBoltMemberIngress> | undefined;
       try {
@@ -475,13 +527,13 @@ describe("Slack durable ingress", () => {
         await first.ingress.stop();
 
         expect(trackEvent).toHaveBeenCalledTimes(1);
-        expect(peekSystemEventEntries("agent:main:main")).toHaveLength(0);
+        expect(peekSystemEventEntries("agent:main:slack:channel:c_test")).toHaveLength(0);
         expect((await queue.listPending()).map((entry) => entry.id)).toContain("Ev-member-retry");
 
         restarted = attachBoltMemberIngress({
           queue,
           trackEvent,
-          resolveUserName,
+          usersInfo,
           pollIntervalMs: 25,
         });
         restarted.ingress.start();
@@ -493,7 +545,7 @@ describe("Slack durable ingress", () => {
           { timeout: 15_000, interval: 100 },
         );
 
-        expect(peekSystemEventEntries("agent:main:main")).toHaveLength(1);
+        expect(peekSystemEventEntries("agent:main:slack:channel:c_test")).toHaveLength(1);
       } finally {
         await first.ingress.stop();
         await restarted?.ingress.stop();

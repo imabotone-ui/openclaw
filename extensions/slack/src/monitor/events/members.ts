@@ -53,7 +53,9 @@ export function registerSlackMemberEvents(params: {
       if (!ingressContext) {
         return;
       }
-      const userInfo = payload.user ? await ctx.resolveUserName(payload.user, eventScope) : {};
+      const userInfo = payload.user
+        ? await ctx.resolveUserName(payload.user, eventScope, { throwOnError: true })
+        : {};
       const userLabel = userInfo?.name ?? payload.user ?? "someone";
       enqueueSystemEvent(
         `Slack: ${userLabel} ${paramsLocal.verb} ${ingressContext.channelLabel}.`,
@@ -66,6 +68,7 @@ export function registerSlackMemberEvents(params: {
       ctx.runtime.error?.(
         danger(`slack ${paramsLocal.verb} handler failed: ${formatErrorMessage(err)}`),
       );
+      throw err;
     }
   };
 

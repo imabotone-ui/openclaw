@@ -135,7 +135,11 @@ export type SlackMonitorContext = {
     channelId: string | null | undefined,
     eventScope?: SlackEventScope,
   ) => SlackMessageEvent["channel_type"] | undefined;
-  resolveUserName: (userId: string, eventScope?: SlackEventScope) => Promise<{ name?: string }>;
+  resolveUserName: (
+    userId: string,
+    eventScope?: SlackEventScope,
+    options?: { throwOnError?: boolean },
+  ) => Promise<{ name?: string }>;
   setSlackThreadStatus: (params: {
     channelId: string;
     threadTs?: string;
@@ -322,7 +326,11 @@ export function createSlackMonitorContext(params: {
     }
   };
 
-  const resolveUserName = async (userId: string, eventScope?: SlackEventScope) => {
+  const resolveUserName = async (
+    userId: string,
+    eventScope?: SlackEventScope,
+    options?: { throwOnError?: boolean },
+  ) => {
     const cacheKey = scopedKey(userId, eventScope);
     const cached = readLruMapEntry(userCache, cacheKey);
     if (cached) {
@@ -338,7 +346,10 @@ export function createSlackMonitorContext(params: {
       const entry = { name };
       writeLruMapEntry(userCache, cacheKey, entry, SLACK_USER_CACHE_MAX_ENTRIES);
       return entry;
-    } catch {
+    } catch (error) {
+      if (options?.throwOnError) {
+        throw error;
+      }
       return {};
     }
   };

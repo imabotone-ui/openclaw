@@ -1,6 +1,9 @@
 // Slack tests cover members plugin behavior.
-import type { AllMiddlewareArgs } from "@slack/bolt";
+import type { AllMiddlewareArgs, App } from "@slack/bolt";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createSlackMonitorContext } from "../context.js";
 
 const memberMocks = vi.hoisted(() => ({
   enqueue: vi.fn(),
@@ -48,6 +51,49 @@ function getMemberHandlers(params: {
     joined: harness.getHandler("member_joined_channel") as MemberHandler | null,
     left: harness.getHandler("member_left_channel") as MemberHandler | null,
   };
+}
+
+function createProductionMemberContext(app: App, runtime: RuntimeEnv) {
+  return createSlackMonitorContext({
+    cfg: {} as OpenClawConfig,
+    accountId: "default",
+    botToken: "xoxb-test",
+    app,
+    runtime,
+    botUserId: "U_BOT",
+    botId: "B_BOT",
+    identityHealth: { lifecycle: "ready", lastError: null },
+    teamId: "T_TEST",
+    apiAppId: "A_TEST",
+    installationIdentity: { kind: "workspace", teamId: "T_TEST" },
+    historyLimit: 0,
+    sessionScope: "per-sender",
+    mainKey: "main",
+    dmEnabled: true,
+    dmPolicy: "open",
+    allowFrom: [],
+    allowNameMatching: false,
+    groupDmEnabled: true,
+    groupDmChannels: [],
+    defaultRequireMention: true,
+    groupPolicy: "open",
+    useAccessGroups: false,
+    reactionMode: "off",
+    reactionAllowlist: [],
+    replyToMode: "off",
+    slashCommand: {
+      enabled: false,
+      name: "openclaw",
+      sessionPrefix: "slack:slash",
+      ephemeral: true,
+    },
+    textLimit: 4000,
+    ackReactionScope: "group-mentions",
+    typingReaction: "",
+    mediaMaxBytes: 1,
+    threadHistoryScope: "thread",
+    threadInheritParent: false,
+  });
 }
 
 async function runMemberCase(args: MemberCaseArgs = {}): Promise<void> {
@@ -145,6 +191,46 @@ describe("registerSlackMemberEvents", () => {
     expect(trackEvent).toHaveBeenCalledTimes(1);
   });
 
+  it("logs and rejects transient production member lookup failures", async () => {
+    const lookupError = new Error("users.info temporarily unavailable");
+    const runtimeError = vi.fn();
+    const harness = initSlackHarness();
+    const app = {
+      event: harness.ctx.app.event.bind(harness.ctx.app),
+      client: {
+        conversations: {
+          info: vi.fn(async () => ({
+            ok: true,
+            channel: { id: "D1", name: "direct", is_im: true },
+          })),
+        },
+        users: { info: vi.fn().mockRejectedValue(lookupError) },
+      },
+    } as unknown as App;
+    const ctx = createProductionMemberContext(app, {
+      log: vi.fn(),
+      error: runtimeError,
+      exit: vi.fn(),
+    });
+    registerSlackMemberEvents({ ctx });
+    const handler = harness.getHandler("member_joined_channel");
+    if (!handler) {
+      throw new Error("expected Slack member joined handler");
+    }
+
+    await expect(
+      handler({
+        event: makeMemberEvent(),
+        body: { event_id: "Ev-member-failure" },
+      }),
+    ).rejects.toBe(lookupError);
+
+    expect(runtimeError).toHaveBeenCalledWith(
+      expect.stringContaining("users.info temporarily unavailable"),
+    );
+    expect(memberMocks.enqueue).not.toHaveBeenCalled();
+  });
+
   it("keys each queued event by the envelope occurrence", async () => {
     await runMemberCase({ body: { event_id: "Ev-member-2" } });
 
@@ -203,7 +289,11 @@ describe("registerSlackMemberEvents", () => {
       "D1",
       expect.objectContaining({ teamId: "T111" }),
     );
-    expect(resolveUserName).toHaveBeenCalledWith("U1", expect.objectContaining({ teamId: "T222" }));
+    expect(resolveUserName).toHaveBeenCalledWith(
+      "U1",
+      expect.objectContaining({ teamId: "T222" }),
+      { throwOnError: true },
+    );
   });
 
   it("rejects enterprise member events without validated listener scope", async () => {
