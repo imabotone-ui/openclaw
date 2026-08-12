@@ -4,6 +4,7 @@ import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { danger } from "openclaw/plugin-sdk/runtime-env";
 import { enqueueSystemEvent } from "openclaw/plugin-sdk/system-event-runtime";
 import type { SlackMonitorContext } from "../context.js";
+import { resolveSlackIngressTurnLifecycle } from "../ingress.js";
 import type { SlackMemberChannelEvent } from "../types.js";
 import {
   authorizeAndResolveSlackSystemEventContext,
@@ -24,6 +25,7 @@ export function registerSlackMemberEvents(params: {
     context: AllMiddlewareArgs["context"];
     client: AllMiddlewareArgs["client"];
   }) => {
+    const turnAdoptionLifecycle = resolveSlackIngressTurnLifecycle(paramsLocal.context);
     try {
       const eventScope = resolveSlackListenerEventScope({
         ctx,
@@ -66,6 +68,9 @@ export function registerSlackMemberEvents(params: {
       ctx.runtime.error?.(
         danger(`slack ${paramsLocal.verb} handler failed: ${formatErrorMessage(err)}`),
       );
+      if (turnAdoptionLifecycle) {
+        throw err;
+      }
     }
   };
 

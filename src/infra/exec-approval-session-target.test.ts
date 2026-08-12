@@ -90,6 +90,22 @@ describe("native approval account selection", () => {
     ).toBe(false);
   });
 
+  it("does not treat a request bound to another channel as unbound", () => {
+    expect(
+      doesApprovalRequestSelectChannelAccount({
+        cfg: {},
+        request: buildRequest({
+          turnSourceChannel: "discord",
+          turnSourceAccountId: "default",
+        }),
+        channel: "telegram",
+        accountId: "default",
+        defaultAccountId: "default",
+        eligibleAccountIds: ["default"],
+      }),
+    ).toBe(false);
+  });
+
   it("selects the recorded account even when several accounts are eligible", () => {
     const request = buildRequest({
       turnSourceChannel: "telegram",

@@ -6,6 +6,7 @@ import { enqueueSystemEvent } from "openclaw/plugin-sdk/system-event-runtime";
 import { allowListMatches, normalizeAllowListLower } from "../allow-list.js";
 import type { SlackMonitorContext } from "../context.js";
 import type { SlackEventScope } from "../event-scope.js";
+import { resolveSlackIngressTurnLifecycle } from "../ingress.js";
 import type { SlackReactionEvent } from "../types.js";
 import {
   authorizeAndResolveSlackSystemEventContext,
@@ -52,7 +53,9 @@ export function registerSlackReactionEvents(params: {
     action: "added" | "removed",
     eventScope: SlackEventScope | undefined,
     eventId: string,
+    context: AllMiddlewareArgs["context"],
   ) => {
+    const turnAdoptionLifecycle = resolveSlackIngressTurnLifecycle(context);
     try {
       const item = event.item;
       if (!item || item.type !== "message") {
@@ -104,6 +107,9 @@ export function registerSlackReactionEvents(params: {
       });
     } catch (err) {
       ctx.runtime.error?.(danger(`slack reaction handler failed: ${formatErrorMessage(err)}`));
+      if (turnAdoptionLifecycle) {
+        throw err;
+      }
     }
   };
 
@@ -118,7 +124,13 @@ export function registerSlackReactionEvents(params: {
       if (ctx.shouldDropMismatchedSlackEvent(body)) {
         return;
       }
-      await handleReactionEvent(event as SlackReactionEvent, "added", eventScope, body.event_id);
+      await handleReactionEvent(
+        event as SlackReactionEvent,
+        "added",
+        eventScope,
+        body.event_id,
+        context,
+      );
     },
   );
 
@@ -133,7 +145,13 @@ export function registerSlackReactionEvents(params: {
       if (ctx.shouldDropMismatchedSlackEvent(body)) {
         return;
       }
-      await handleReactionEvent(event as SlackReactionEvent, "removed", eventScope, body.event_id);
+      await handleReactionEvent(
+        event as SlackReactionEvent,
+        "removed",
+        eventScope,
+        body.event_id,
+        context,
+      );
     },
   );
 }
