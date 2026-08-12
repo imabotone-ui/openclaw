@@ -1207,7 +1207,8 @@ describe("sessions_send gating", () => {
     expect((result.details as { error?: string } | undefined)?.error ?? "").toContain(
       "cannot target a thread session",
     );
-    expect(callGatewayMock).not.toHaveBeenCalled();
+    expect(callGatewayMock).toHaveBeenCalledTimes(1);
+    expect(requireGatewayRequest().method).toBe("sessions.resolve");
   });
 
   it("rejects Telegram topic session targets before dispatching an agent run", async () => {
@@ -1273,8 +1274,7 @@ describe("sessions_send gating", () => {
     expect((result.details as { error?: string } | undefined)?.error ?? "").toContain(
       "cannot target a thread session",
     );
-    expect(callGatewayMock).toHaveBeenCalledTimes(1);
-    expect(requireGatewayRequest().method).toBe("sessions.resolve");
+    expect(callGatewayMock).not.toHaveBeenCalled();
   });
 
   it("does not disclose a resolved thread session key from a sessionId target", async () => {
@@ -1319,8 +1319,7 @@ describe("sessions_send gating", () => {
       error: "sessions_send cannot target the calling session; use your own reply instead",
       sessionKey: "current",
     });
-    expect(callGatewayMock).toHaveBeenCalledTimes(1);
-    expect(requireGatewayRequest().method).toBe("sessions.resolve");
+    expect(callGatewayMock).not.toHaveBeenCalled();
     expect(callGatewayMock.mock.calls).not.toContainEqual([
       expect.objectContaining({ method: "agent" }),
     ]);
