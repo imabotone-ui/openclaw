@@ -6,6 +6,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 const resolveFeishuSendTargetMock = vi.hoisted(() => vi.fn());
 const resolveMarkdownTableModeMock = vi.hoisted(() => vi.fn(() => "preserve"));
 const convertMarkdownTablesMock = vi.hoisted(() => vi.fn((text: string) => text));
+const UNPAIRED_SURROGATE_RE =
+  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
 vi.mock("./send-target.js", () => ({
   resolveFeishuSendTarget: resolveFeishuSendTargetMock,
@@ -100,6 +102,47 @@ describe("Feishu reply fallback for withdrawn/deleted targets", () => {
       /Feishu send failed: .*"http_status":400.*"feishu_code":9499.*"feishu_msg":"Bad Request".*"feishu_log_id":"202604291247104BEF4C42D2420A9AD569".*"feishu_troubleshooter":"https:\/\/open\.feishu\.cn\/search\?log_id=202604291247104BEF4C42D2420A9AD569"/,
     );
     expect((error as Error).message).not.toMatch(/private|secret/);
+    expect(createMock).toHaveBeenCalledOnce();
+  });
+
+  it("bounds aggregate diagnostics after JSON escaping", async () => {
+    const escaped = (prefix: string) => `${prefix}${'\0"\\😀'.repeat(150)}`;
+    const apiError = Object.assign(new Error("private transport error"), {
+      config: { headers: { authorization: "secret request token" } },
+      response: {
+        status: 400,
+        data: {
+          code: 9499,
+          msg: escaped("message:"),
+          error: {
+            log_id: escaped("log:"),
+            troubleshooter: escaped("troubleshooter:"),
+          },
+          request_payload: "private response echo",
+        },
+      },
+    });
+    createMock.mockRejectedValue(apiError);
+
+    const error = await sendMessageFeishu({
+      cfg: {} as never,
+      to: "user:ou_target",
+      text: "hello",
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformMessageNotDispatchedError);
+    expect(error).toMatchObject({ retryable: false, cause: apiError });
+    const prefix = "Feishu send failed: ";
+    expect((error as Error).message.startsWith(prefix)).toBe(true);
+    const serialized = (error as Error).message.slice(prefix.length);
+    expect(serialized.length).toBeLessThanOrEqual(2_000);
+    expect(serialized).not.toMatch(UNPAIRED_SURROGATE_RE);
+    const details = JSON.parse(serialized) as Record<string, unknown>;
+    expect(details).toMatchObject({ http_status: 400, feishu_code: 9499 });
+    expect(details.feishu_msg).toMatch(/^message:/u);
+    expect(details.feishu_log_id).toMatch(/^log:/u);
+    expect(details.feishu_troubleshooter).toMatch(/^troubleshooter:/u);
+    expect(serialized).not.toMatch(/private|secret/u);
     expect(createMock).toHaveBeenCalledOnce();
   });
 

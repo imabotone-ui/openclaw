@@ -18,12 +18,49 @@ type FeishuMessageApiResponse = {
 };
 
 const FEISHU_PROVIDER_DIAGNOSTIC_MAX_CHARS = 500;
+const FEISHU_REJECTION_DIAGNOSTIC_MAX_CHARS = 2_000;
+const FEISHU_REJECTION_STRING_FIELDS = [
+  "feishu_msg",
+  "feishu_log_id",
+  "feishu_troubleshooter",
+] as const;
 
 function normalizeFeishuProviderDiagnostic(value: unknown): string | undefined {
   const normalized = normalizeOptionalString(value);
   return normalized
     ? sliceUtf16Safe(normalized, 0, FEISHU_PROVIDER_DIAGNOSTIC_MAX_CHARS)
     : undefined;
+}
+
+function serializeFeishuRejectionDiagnostics(details: {
+  http_status?: number;
+  feishu_code?: number;
+  feishu_msg?: string;
+  feishu_log_id?: string;
+  feishu_troubleshooter?: string;
+}): string {
+  const serialized = JSON.stringify(details);
+  if (serialized.length <= FEISHU_REJECTION_DIAGNOSTIC_MAX_CHARS) {
+    return serialized;
+  }
+  const bounded = { ...details };
+  let candidate = serialized;
+  // JSON escaping can expand pre-bounded inputs sixfold. Trim the longest encoded
+  // field until the final diagnostic, rather than only each input, honors the cap.
+  while (candidate.length > FEISHU_REJECTION_DIAGNOSTIC_MAX_CHARS) {
+    const field = FEISHU_REJECTION_STRING_FIELDS.filter((key) => bounded[key])
+      .toSorted(
+        (left, right) =>
+          JSON.stringify(bounded[right]).length - JSON.stringify(bounded[left]).length,
+      )
+      .at(0);
+    if (!field) {
+      break;
+    }
+    bounded[field] = sliceUtf16Safe(bounded[field] ?? "", 0, -1);
+    candidate = JSON.stringify(bounded);
+  }
+  return candidate;
 }
 
 function createFeishuMessageRejection(params: {
@@ -64,7 +101,7 @@ export function createFeishuRejectedMessageApiError(
         response: data,
         errorPrefix,
         cause: error,
-        detail: JSON.stringify({
+        detail: serializeFeishuRejectionDiagnostics({
           http_status: typeof response?.status === "number" ? response.status : undefined,
           feishu_code: typeof data.code === "number" ? data.code : undefined,
           feishu_msg: normalizeFeishuProviderDiagnostic(data.msg),
