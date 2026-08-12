@@ -1,5 +1,6 @@
 // Feishu tests cover send.reply fallback plugin behavior.
 import { isChannelPartialDeliveryError } from "openclaw/plugin-sdk/channel-inbound";
+import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const resolveFeishuSendTargetMock = vi.hoisted(() => vi.fn());
@@ -67,6 +68,10 @@ describe("Feishu reply fallback for withdrawn/deleted targets", () => {
 
   it("preserves Feishu diagnostics when direct sends reject before response checks", async () => {
     const apiError = Object.assign(new Error("Request failed with status code 400"), {
+      config: {
+        data: { content: "private request payload" },
+        headers: { authorization: "secret request token" },
+      },
       response: {
         status: 400,
         data: {
@@ -77,20 +82,25 @@ describe("Feishu reply fallback for withdrawn/deleted targets", () => {
             troubleshooter:
               "https://open.feishu.cn/search?log_id=202604291247104BEF4C42D2420A9AD569",
           },
+          request_payload: "private response echo",
         },
       },
     });
     createMock.mockRejectedValue(apiError);
 
-    await expect(
-      sendMessageFeishu({
-        cfg: {} as never,
-        to: "user:ou_target",
-        text: "hello",
-      }),
-    ).rejects.toThrow(
+    const error = await sendMessageFeishu({
+      cfg: {} as never,
+      to: "user:ou_target",
+      text: "hello",
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformMessageNotDispatchedError);
+    expect(error).toMatchObject({ retryable: false, cause: apiError });
+    expect((error as Error).message).toMatch(
       /Feishu send failed: .*"http_status":400.*"feishu_code":9499.*"feishu_msg":"Bad Request".*"feishu_log_id":"202604291247104BEF4C42D2420A9AD569".*"feishu_troubleshooter":"https:\/\/open\.feishu\.cn\/search\?log_id=202604291247104BEF4C42D2420A9AD569"/,
     );
+    expect((error as Error).message).not.toMatch(/private|secret/);
+    expect(createMock).toHaveBeenCalledOnce();
   });
 
   it("falls back to create for withdrawn post replies", async () => {

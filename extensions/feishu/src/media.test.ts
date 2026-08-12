@@ -457,7 +457,7 @@ describe("sendMediaFeishu msg_type routing", () => {
 
     expect(error).toBeInstanceOf(PlatformMessageNotDispatchedError);
     expect(error).toMatchObject({ retryable: false });
-    expect((error as Error).message).toBe("Feishu image send failed: Bad Request (code=9499)");
+    expect((error as Error).message).toMatch(/"feishu_log_id":"20260429124731MEDIA"/);
   });
 
   it("uses msg_type=media when replying with mp4", async () => {

@@ -137,7 +137,7 @@ describe("requestFeishuApi — no retry for non-rate-limit errors", () => {
     expect(error).toBeInstanceOf(PlatformMessageNotDispatchedError);
     expect(error).toMatchObject({ retryable: false, cause: rejected });
     expect((error as Error).message).toBe(
-      "Feishu card send failed: card table number over limit (code=230099)",
+      'Feishu card send failed: {"http_status":400,"feishu_code":230099,"feishu_msg":"card table number over limit"}',
     );
     expect(request).toHaveBeenCalledTimes(1);
   });

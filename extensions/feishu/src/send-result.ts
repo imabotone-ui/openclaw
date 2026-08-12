@@ -17,12 +17,20 @@ type FeishuMessageApiResponse = {
   };
 };
 
-const FEISHU_PROVIDER_ERROR_MESSAGE_MAX_CHARS = 500;
+const FEISHU_PROVIDER_DIAGNOSTIC_MAX_CHARS = 500;
+
+function normalizeFeishuProviderDiagnostic(value: unknown): string | undefined {
+  const normalized = normalizeOptionalString(value);
+  return normalized
+    ? sliceUtf16Safe(normalized, 0, FEISHU_PROVIDER_DIAGNOSTIC_MAX_CHARS)
+    : undefined;
+}
 
 function createFeishuMessageRejection(params: {
   response: unknown;
   errorPrefix: string;
   cause: unknown;
+  detail?: string;
 }): PlatformMessageNotDispatchedError | undefined {
   const response = isRecord(params.response) ? params.response : undefined;
   if (!response) {
@@ -31,10 +39,10 @@ function createFeishuMessageRejection(params: {
   if (typeof response.code !== "number" || response.code === 0) {
     return undefined;
   }
-  const providerMessage = normalizeOptionalString(response.msg);
-  const detail = providerMessage
-    ? `${sliceUtf16Safe(providerMessage, 0, FEISHU_PROVIDER_ERROR_MESSAGE_MAX_CHARS)} (code=${response.code})`
-    : `code ${response.code}`;
+  const providerMessage = normalizeFeishuProviderDiagnostic(response.msg);
+  const detail =
+    params.detail ??
+    (providerMessage ? `${providerMessage} (code=${response.code})` : `code ${response.code}`);
   return new PlatformMessageNotDispatchedError(`${params.errorPrefix}: ${detail}`, {
     cause: params.cause,
     retryable: false,
@@ -50,8 +58,24 @@ export function createFeishuRejectedMessageApiError(
   }
   const response = isRecord(error.response) ? error.response : undefined;
   const data = isRecord(response?.data) ? response.data : undefined;
+  const nestedError = isRecord(data?.error) ? data.error : undefined;
   return data
-    ? createFeishuMessageRejection({ response: data, errorPrefix, cause: error })
+    ? createFeishuMessageRejection({
+        response: data,
+        errorPrefix,
+        cause: error,
+        detail: JSON.stringify({
+          http_status: typeof response?.status === "number" ? response.status : undefined,
+          feishu_code: typeof data.code === "number" ? data.code : undefined,
+          feishu_msg: normalizeFeishuProviderDiagnostic(data.msg),
+          feishu_log_id:
+            normalizeFeishuProviderDiagnostic(data.log_id) ??
+            normalizeFeishuProviderDiagnostic(nestedError?.log_id),
+          feishu_troubleshooter:
+            normalizeFeishuProviderDiagnostic(data.troubleshooter) ??
+            normalizeFeishuProviderDiagnostic(nestedError?.troubleshooter),
+        }),
+      })
     : undefined;
 }
 
