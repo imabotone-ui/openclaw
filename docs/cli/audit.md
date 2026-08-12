@@ -186,12 +186,15 @@ optional delivery kind, failure stage, duration, result count, normalized
 reason code, and keyed account/conversation/message/target pseudonyms. The
 current inbound boundary covers accepted messages that reach core dispatch,
 including core duplicate and terminal processing outcomes. The outbound
-boundary writes one terminal row per original logical reply payload that reaches
-shared durable delivery; chunking and adapter fan-out are aggregated in
-`resultCount`. Queued retryable or ambiguous sends are recorded only after an
-acknowledgement, dead letter, or reconciliation makes the outcome terminal.
-Plugin-local and direct-send paths that bypass those shared boundaries are not
-yet covered; absence of a row does not prove that no message existed.
+boundary covers shared durable delivery and settled direct channel-turn
+failures. A rejected final therefore leaves inbound processing completed and
+writes a separate outbound failure row. Durable delivery writes one terminal
+row per original logical reply payload; chunking and adapter fan-out are
+aggregated in `resultCount`. Queued retryable or ambiguous sends are recorded
+only after an acknowledgement, dead letter, or reconciliation makes the outcome
+terminal. Other plugin-local and direct-send paths that bypass those shared
+boundaries are not yet covered; absence of a row does not prove that no message
+existed.
 
 The audit ledger does not replace transcripts, task history, cron run history,
 or logs. It provides a small cross-run index for operator questions without

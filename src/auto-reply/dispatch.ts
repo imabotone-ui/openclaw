@@ -21,6 +21,7 @@ import {
   resolveCommandTurnContext,
   resolveCommandTurnTargetSessionKey,
 } from "./command-turn-context.js";
+import { finalizeDispatchResult } from "./dispatch-delivery-terminal.js";
 import { withReplyDispatcher } from "./dispatch-dispatcher.js";
 import {
   foregroundReplyFenceByKey,
@@ -385,45 +386,6 @@ function buildDispatchTimelineAttributes(ctx: MsgContext | FinalizedMsgContext) 
 
 type DispatchInboundResult = DispatchFromConfigResult;
 export { settleReplyDispatcher, withReplyDispatcher } from "./dispatch-dispatcher.js";
-
-function finalizeDispatchResult(
-  result: DispatchFromConfigResult,
-  dispatcher: ReplyDispatcher,
-): DispatchFromConfigResult {
-  const cancelledCounts = dispatcher.getCancelledCounts?.();
-  const failedCounts = dispatcher.getFailedCounts?.();
-  if (!cancelledCounts && !failedCounts) {
-    return result;
-  }
-
-  const resultCounts = {
-    tool: result.counts?.tool ?? 0,
-    block: result.counts?.block ?? 0,
-    final: result.counts?.final ?? 0,
-  };
-  // Dispatcher counts include cancelled/failed queued blocks; public result counts do not.
-  const counts = {
-    tool: Math.max(0, resultCounts.tool - (cancelledCounts?.tool ?? 0) - (failedCounts?.tool ?? 0)),
-    block: Math.max(
-      0,
-      resultCounts.block - (cancelledCounts?.block ?? 0) - (failedCounts?.block ?? 0),
-    ),
-    final: Math.max(
-      0,
-      resultCounts.final - (cancelledCounts?.final ?? 0) - (failedCounts?.final ?? 0),
-    ),
-  };
-  const hasFailedCounts =
-    (failedCounts?.tool ?? 0) > 0 ||
-    (failedCounts?.block ?? 0) > 0 ||
-    (failedCounts?.final ?? 0) > 0;
-  return {
-    ...result,
-    queuedFinal: result.queuedFinal && counts.final > 0,
-    counts,
-    ...(hasFailedCounts ? { failedCounts } : {}),
-  };
-}
 
 /** Dispatches one finalized inbound message through reply resolution and queued delivery. */
 export async function dispatchInboundMessage(params: {

@@ -153,11 +153,13 @@ Two authoritative boundaries produce message records:
 
 - **Inbound** rows are written when an accepted message reaches core dispatch,
   including duplicate and terminal processing outcomes.
-- **Outbound** rows are written when shared durable delivery reaches a
-  terminal outcome: sent, suppressed, failed, or an explicit `unknown` for
-  crash-ambiguous sends. Queue recovery and dead-letter outcomes are included.
-  Each original logical reply payload gets one terminal row; chunking and
-  adapter fan-out aggregate into `resultCount`.
+- **Outbound** rows are written when shared durable delivery, or a direct
+  channel-turn delivery failure, reaches a terminal outcome: sent, suppressed,
+  failed, or an explicit `unknown` for crash-ambiguous sends. Queue recovery
+  and dead-letter outcomes are included. A direct final rejection is recorded
+  separately from the successful inbound processing row. Each original logical
+  reply payload gets one terminal row where per-payload identity is available;
+  chunking and adapter fan-out aggregate into `resultCount`.
 
 ### Conversation-kind classification
 

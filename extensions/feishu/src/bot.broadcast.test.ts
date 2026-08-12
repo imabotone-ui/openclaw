@@ -448,6 +448,7 @@ describe("broadcast dispatch", () => {
         queuedFinal: false,
         counts: { final: 0 },
         failedCounts: { tool: 0, block: 0, final: 1 },
+        deliveryTerminal: { outcome: "failed", retryable: false },
       });
     const ensureNoVisibleReplyFallback = vi.fn();
     mockCreateFeishuReplyDispatcher.mockReturnValueOnce({

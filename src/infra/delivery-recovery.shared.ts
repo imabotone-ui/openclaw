@@ -8,7 +8,6 @@ import { sleep } from "../utils/sleep.js";
 import { collectErrorGraphCandidates, extractErrorCode } from "./errors.js";
 import {
   isPlatformMessageNotDispatchedError,
-  isPlatformMessageRejectedError,
   type PlatformMessageNotDispatchedError,
 } from "./outbound/deliver-types.js";
 import { getRetryAttemptErrors } from "./retry-attempt-errors.js";
@@ -165,8 +164,18 @@ export function isProvenDeliveryNotSentError(err: unknown): boolean {
 export function findPlatformMessageRejectedError(
   err: unknown,
 ): (PlatformMessageNotDispatchedError & { readonly retryable: false }) | undefined {
+  const failure = findPlatformMessageNotDispatchedError(err);
+  return failure && !failure.retryable
+    ? (failure as PlatformMessageNotDispatchedError & { readonly retryable: false })
+    : undefined;
+}
+
+/** Finds any provider assertion that the payload did not cross the platform boundary. */
+export function findPlatformMessageNotDispatchedError(
+  err: unknown,
+): PlatformMessageNotDispatchedError | undefined {
   for (const candidate of collectErrorGraphCandidates(err, nestedErrorCandidates)) {
-    if (isPlatformMessageRejectedError(candidate)) {
+    if (isPlatformMessageNotDispatchedError(candidate)) {
       return candidate;
     }
   }

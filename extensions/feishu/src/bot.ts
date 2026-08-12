@@ -102,19 +102,22 @@ const PERMISSION_ERROR_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 
 function shouldSendNoVisibleReplyFallback(dispatchResult: {
   counts: { final?: number };
-  failedCounts?: { final?: number };
+  deliveryTerminal?:
+    | { outcome: "failed"; retryable: boolean }
+    | { outcome: "delivered" | "partial_failure" | "unknown" };
   noVisibleReplyFallbackEligible?: boolean;
   queuedFinal?: boolean;
   sendPolicyDenied?: boolean;
   sourceReplyDeliveryMode?: string;
 }): boolean {
   const finalCount = dispatchResult.counts.final ?? 0;
-  const failedFinalCount = dispatchResult.failedCounts?.final ?? 0;
   const emptyEligibleDispatch =
     dispatchResult.noVisibleReplyFallbackEligible === true &&
     dispatchResult.queuedFinal !== true &&
     finalCount === 0;
-  const finalDeliveryFailed = failedFinalCount > 0;
+  const finalDeliveryFailed =
+    dispatchResult.deliveryTerminal?.outcome === "failed" &&
+    !dispatchResult.deliveryTerminal.retryable;
   return (
     dispatchResult.sendPolicyDenied !== true &&
     dispatchResult.sourceReplyDeliveryMode !== "message_tool_only" &&

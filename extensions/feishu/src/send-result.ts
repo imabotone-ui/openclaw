@@ -83,6 +83,9 @@ function createFeishuMessageRejection(params: {
   return new PlatformMessageNotDispatchedError(`${params.errorPrefix}: ${detail}`, {
     cause: params.cause,
     retryable: false,
+    publicError: {
+      code: String(response.code),
+    },
   });
 }
 

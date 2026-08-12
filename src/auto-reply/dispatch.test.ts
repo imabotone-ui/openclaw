@@ -917,6 +917,7 @@ describe("withReplyDispatcher", () => {
       queuedFinal: false,
       counts: { tool: 0, block: 0, final: 0 },
       failedCounts: { tool: 0, block: 0, final: 1 },
+      deliveryTerminal: { outcome: "unknown", retryable: false },
     });
   });
 

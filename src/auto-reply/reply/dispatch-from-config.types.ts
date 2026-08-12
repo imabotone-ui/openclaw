@@ -1,3 +1,4 @@
+import type { ChannelDeliveryTerminal } from "../../channels/turn/delivery-terminal.js";
 // Shared type contracts for dispatch-from-config runtime execution.
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { SourceReplyDeliveryMode } from "../get-reply-options.types.js";
@@ -11,6 +12,8 @@ export type DispatchFromConfigResult = {
   queuedFinal: boolean;
   counts: Record<ReplyDispatchKind, number>;
   failedCounts?: Partial<Record<ReplyDispatchKind, number>>;
+  /** Settled final-delivery result; inbound processing has its own independent terminal. */
+  deliveryTerminal?: ChannelDeliveryTerminal;
   sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
   sendPolicyDenied?: boolean;
   observedReplyDelivery?: boolean;

@@ -1,13 +1,7 @@
 // Dispatches final reply payloads through visible senders and message tools.
-import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import type { TypingCallbacks } from "../../channels/typing.js";
 import type { HumanDelayConfig } from "../../config/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import {
-  findPlatformMessageRejectedError,
-  isProvenDeliveryNotSentError,
-} from "../../infra/delivery-recovery.shared.js";
-import { collectErrorGraphCandidates } from "../../infra/errors.js";
 import { settlePendingFinalDelivery } from "../../infra/outbound/delivery-completion.js";
 import { generateSecureInt } from "../../infra/secure-random.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
@@ -26,6 +20,11 @@ import {
   type NormalizeReplyOutcome,
   type NormalizeReplySkipReason,
 } from "./normalize-reply.js";
+import {
+  isRetryableNoSendFailure,
+  registerReplyDispatcherDeliveryFailures,
+  type ReplyDispatchDeliveryFailure,
+} from "./reply-dispatcher-delivery-failures.js";
 import type {
   ReplyDispatchBeforeDeliver,
   ReplyDispatchBeforeDeliverOptions,
@@ -58,26 +57,10 @@ export type ReplyDispatchDeliveryOutcome =
   | "failed-before-deliver"
   | "failed-deliver";
 
-function isRetryableNoSendFailure(error: unknown): boolean {
-  return (
-    isProvenDeliveryNotSentError(error) &&
-    !findPlatformMessageRejectedError(error) &&
-    !collectErrorGraphCandidates(error, (candidate) => [
-      candidate.cause,
-      candidate.original,
-      candidate.error,
-      candidate.reason,
-      ...(Array.isArray(candidate.errors) ? candidate.errors : []),
-    ]).some(
-      (candidate) =>
-        isRecord(candidate) &&
-        (candidate.sentBeforeError === true ||
-          candidate.visibleReplySent === true ||
-          (isRecord(candidate.deliveryResult) &&
-            candidate.deliveryResult.visibleReplySent === true)),
-    )
-  );
-}
+type ReplyDispatchDeliveryAttempt = {
+  outcome: ReplyDispatchDeliveryOutcome;
+  error?: unknown;
+};
 
 type ReplyDispatchDeliveryOutcomeTracker = {
   promise: Promise<ReplyDispatchDeliveryOutcome>;
@@ -435,6 +418,7 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
     block: 0,
     final: 0,
   };
+  const deliveryFailures: ReplyDispatchDeliveryFailure[] = [];
 
   // Register this dispatcher globally for gateway restart coordination.
   const { unregister } = registerDispatcher({
@@ -496,7 +480,7 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
   const deliverOnce = async (
     payload: ReplyPayload,
     info: ReplyDispatchRuntimeInfo,
-  ): Promise<ReplyDispatchDeliveryOutcome> => {
+  ): Promise<ReplyDispatchDeliveryAttempt> => {
     let deliverPayload: ReplyPayload | null = payload;
     let deliveryStarted = false;
     const custody = getReplyPayloadMetadata(payload)?.pendingFinalDeliveryCompletion;
@@ -517,7 +501,7 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
             ]);
           }
           await notifyBeforeDeliverCancelled(payload, info);
-          return "cancelled";
+          return { outcome: "cancelled" };
         }
         deliverPayload = copyReplyPayloadMetadata(payload, deliverPayload);
       }
@@ -532,7 +516,7 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
         );
         if (claim.state !== "queued") {
           await notifyBeforeDeliverCancelled(payload, info);
-          return "cancelled";
+          return { outcome: "cancelled" };
         }
       }
       deliveryStarted = true;
@@ -542,7 +526,7 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
           "queued",
         ]);
       }
-      return "delivered";
+      return { outcome: "delivered" };
     } catch (error) {
       const outcome =
         deliveryStarted && !isRetryableNoSendFailure(error)
@@ -562,7 +546,7 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
       try {
         await options.onError?.(error, info);
       } catch {}
-      return outcome;
+      return { outcome, error };
     }
   };
 
@@ -623,12 +607,14 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
           }
         }
         const dispatchInfo = buildReplyDispatchRuntimeInfo(normalized, kind);
-        deliveryOutcome = await deliverOnce(normalized, dispatchInfo);
+        let attempt = await deliverOnce(normalized, dispatchInfo);
+        deliveryOutcome = attempt.outcome;
         if (
           deliveryFallback &&
           (deliveryOutcome === "cancelled" || deliveryOutcome === "failed-before-deliver")
         ) {
-          deliveryOutcome = await deliverOnce(deliveryFallback, dispatchInfo);
+          attempt = await deliverOnce(deliveryFallback, dispatchInfo);
+          deliveryOutcome = attempt.outcome;
         }
         if (deliveryOutcome === "cancelled") {
           cancelledCounts[kind] += 1;
@@ -637,10 +623,12 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
           deliveryOutcome === "failed-deliver"
         ) {
           failedCounts[kind] += 1;
+          deliveryFailures.push({ kind, outcome: deliveryOutcome, error: attempt.error });
         }
       })
       .catch(async (err: unknown) => {
         failedCounts[kind] += 1;
+        deliveryFailures.push({ kind, outcome: "failed-before-deliver", error: err });
         try {
           await options.onError?.(err, buildReplyDispatchRuntimeInfo(normalized, kind));
         } catch {}
@@ -722,6 +710,7 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
     normalize: (kind, payload) => normalizeForDispatch(kind, payload, true),
   });
   beforeDeliverCancelledHooks.set(dispatcher, appendedBeforeDeliverCancelledHooks);
+  registerReplyDispatcherDeliveryFailures(dispatcher, deliveryFailures);
   return dispatcher;
 }
 

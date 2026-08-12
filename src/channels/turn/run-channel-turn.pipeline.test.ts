@@ -294,20 +294,26 @@ describe("channel turn pipeline", () => {
       return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
     }) as DispatchReplyWithBufferedBlockDispatcher;
 
-    await expect(
-      dispatchTestAssembledTurn({
-        channel: "feishu",
-        routeSessionKey: "agent:main:feishu:peer",
-        ctxPayload: createCtx({ Surface: "feishu", Provider: "feishu" }),
-        recordInboundSession: createRecordInboundSession(),
-        dispatchReplyWithBufferedBlockDispatcher,
-        delivery: {
-          observeMessageSent: true,
-          deliver: async () => ({ visibleReplySent: false, finalization }),
-          onError,
-        },
-      }),
-    ).rejects.toBe(partialError);
+    const result = await dispatchTestAssembledTurn({
+      channel: "feishu",
+      routeSessionKey: "agent:main:feishu:peer",
+      ctxPayload: createCtx({ Surface: "feishu", Provider: "feishu" }),
+      recordInboundSession: createRecordInboundSession(),
+      dispatchReplyWithBufferedBlockDispatcher,
+      delivery: {
+        observeMessageSent: true,
+        deliver: async () => ({ visibleReplySent: false, finalization }),
+        onError,
+      },
+    });
+
+    expect(result).toMatchObject({
+      dispatched: true,
+      dispatchResult: {
+        counts: { final: 1 },
+        deliveryTerminal: { outcome: "partial_failure", retryable: false },
+      },
+    });
 
     expect(emitMessageSent).toHaveBeenCalledOnce();
     expect(emitMessageSent).toHaveBeenCalledWith({
@@ -397,16 +403,23 @@ describe("channel turn pipeline", () => {
       return { queuedFinal: true, counts: { tool: 0, block: 0, final: 2 } };
     }) as DispatchReplyWithBufferedBlockDispatcher;
 
-    await expect(
-      dispatchTestAssembledTurn({
-        channel: "feishu",
-        routeSessionKey: "agent:main:feishu:peer",
-        ctxPayload: createCtx({ Surface: "feishu", Provider: "feishu" }),
-        recordInboundSession: createRecordInboundSession(),
-        dispatchReplyWithBufferedBlockDispatcher,
-        delivery: { observeMessageSent: true, deliver },
-      }),
-    ).rejects.toBe(partialError);
+    const result = await dispatchTestAssembledTurn({
+      channel: "feishu",
+      routeSessionKey: "agent:main:feishu:peer",
+      ctxPayload: createCtx({ Surface: "feishu", Provider: "feishu" }),
+      recordInboundSession: createRecordInboundSession(),
+      dispatchReplyWithBufferedBlockDispatcher,
+      delivery: { observeMessageSent: true, deliver },
+    });
+
+    expect(result).toMatchObject({
+      dispatched: true,
+      dispatchResult: {
+        counts: { final: 1 },
+        failedCounts: { final: 1 },
+        deliveryTerminal: { outcome: "partial_failure", retryable: false },
+      },
+    });
 
     expect(emitMessageSent).toHaveBeenCalledTimes(2);
     expect(emitMessageSent).toHaveBeenNthCalledWith(1, {

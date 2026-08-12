@@ -845,14 +845,16 @@ describes the effective payload after hooks and rendering; suppressed or
 crash-ambiguous rows omit it.
 
 Current message coverage includes accepted inbound messages that reach core
-dispatch, including core duplicate/terminal outcomes. Outbound coverage writes
-one terminal row per original logical reply payload that reaches shared durable
-delivery; chunking and adapter fan-out are aggregated in `resultCount`. Queued
-retryable or ambiguous sends are recorded only after acknowledgement, dead
-letter, or reconciliation. Plugin-local and direct-send paths that bypass those
-shared boundaries are not yet covered. The bounded worker queue is best-effort
-and may drop records on failure or saturation, so this surface is not a
-lossless compliance archive.
+dispatch, including core duplicate/terminal outcomes. Outbound coverage
+includes shared durable delivery and settled direct channel-turn failures. A
+rejected final keeps the inbound processing row completed and produces a
+separate outbound failure row. Durable delivery writes one terminal row per
+original logical reply payload; chunking and adapter fan-out are aggregated in
+`resultCount`. Queued retryable or ambiguous sends are recorded only after
+acknowledgement, dead letter, or reconciliation. Other plugin-local and
+direct-send paths that bypass those shared boundaries are not yet covered. The
+bounded worker queue is best-effort and may drop records on failure or
+saturation, so this surface is not a lossless compliance archive.
 
 Recording is on by default and controlled by
 [`logging.audit.enabled`](/gateway/configuration-reference#audit). Message

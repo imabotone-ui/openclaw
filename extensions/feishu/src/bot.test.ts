@@ -1178,6 +1178,7 @@ describe("handleFeishuMessage command authorization", () => {
       queuedFinal: false,
       counts: { tool: 0, block: 0, final: 0 },
       failedCounts: { tool: 0, block: 0, final: 1 },
+      deliveryTerminal: { outcome: "failed", retryable: false },
     });
     const ensureNoVisibleReplyFallback = vi.fn();
     mockCreateFeishuReplyDispatcher.mockReturnValueOnce({
@@ -1197,6 +1198,39 @@ describe("handleFeishuMessage command authorization", () => {
 
     expect(ensureNoVisibleReplyFallback).toHaveBeenCalledWith("dispatch-complete-no-visible-reply");
   });
+
+  it.each([
+    ["retryable", { outcome: "failed", retryable: true }],
+    ["partial", { outcome: "partial_failure", retryable: false }],
+    ["unknown", { outcome: "unknown", retryable: false }],
+  ] as const)(
+    "does not send no-visible fallback for a %s final outcome",
+    async (_name, terminal) => {
+      mockDispatchReplyFromConfig.mockResolvedValueOnce({
+        queuedFinal: false,
+        counts: { tool: 0, block: 0, final: 0 },
+        failedCounts: { tool: 0, block: 0, final: 1 },
+        deliveryTerminal: terminal,
+      });
+      const ensureNoVisibleReplyFallback = vi.fn();
+      mockCreateFeishuReplyDispatcher.mockReturnValueOnce({
+        dispatcherOptions: {},
+        delivery: { deliver: vi.fn(async () => undefined) },
+        replyOptions: {},
+        ensureNoVisibleReplyFallback,
+      });
+
+      await dispatchMessage({
+        cfg: createFeishuTestConfig({ dmPolicy: "open" }),
+        event: createFeishuTestEvent({
+          messageId: `msg-final-delivery-${_name}`,
+          senderOpenId: "ou-sender",
+        }),
+      });
+
+      expect(ensureNoVisibleReplyFallback).not.toHaveBeenCalled();
+    },
+  );
 
   it("uses refreshed config for dynamic agent dispatch", async () => {
     mockShouldComputeCommandAuthorized.mockReturnValue(false);
