@@ -152,7 +152,7 @@ describe("models.list OpenAI routes", () => {
           config,
           snapshot: { entries: [catalogEntry("stale", "openai-responses")], routeVariants: [] },
         },
-        preloadedOnly: true,
+        preparedOnly: true,
       }),
     ).resolves.toEqual({ models: [] });
     expect(loadGatewayModelCatalogSnapshot).not.toHaveBeenCalled();

@@ -263,7 +263,7 @@ async function defaultBuildProjection(params: {
         config: params.facts.owner.config,
         snapshot,
       },
-      preloadedOnly: true,
+      preparedOnly: true,
       catalogProjector: projector,
     }),
   ]);

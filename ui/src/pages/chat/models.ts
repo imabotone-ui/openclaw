@@ -24,10 +24,11 @@ function modelCatalogCacheFor(client: GatewayBrowserClient): Map<string, ModelCa
 
 export async function loadModels(
   client: GatewayBrowserClient,
-  opts?: { agentId?: string; refresh?: boolean },
+  opts?: { agentId?: string; preparedOnly?: boolean; refresh?: boolean },
 ): Promise<ModelCatalogEntry[]> {
   const cache = modelCatalogCacheFor(client);
-  const cacheKey = opts?.agentId?.trim() ?? "";
+  const agentId = opts?.agentId?.trim() ?? "";
+  const cacheKey = `${agentId}\0${opts?.preparedOnly ? "prepared" : "exact"}`;
   const cached = cache.get(cacheKey);
   const now = Date.now();
   if (!opts?.refresh && cached?.models && cached.expiresAt > now) {
@@ -43,7 +44,8 @@ export async function loadModels(
   const inFlight: Promise<ModelCatalogEntry[]> = requestModels(
     client,
     cached?.models,
-    cacheKey || undefined,
+    agentId || undefined,
+    opts?.preparedOnly === true,
   )
     .then((result) => {
       const latest = cache.get(cacheKey);
@@ -81,11 +83,13 @@ async function requestModels(
   client: GatewayBrowserClient,
   fallback: ModelCatalogEntry[] | undefined,
   agentId: string | undefined,
+  preparedOnly: boolean,
 ): Promise<{ models: ModelCatalogEntry[]; fresh: boolean }> {
   try {
     const result = await client.request<{ models: ModelCatalogEntry[] }>("models.list", {
       view: "configured",
       ...(agentId ? { agentId } : {}),
+      ...(preparedOnly ? { preparedOnly: true } : {}),
     });
     return { models: result?.models ?? [], fresh: true };
   } catch {

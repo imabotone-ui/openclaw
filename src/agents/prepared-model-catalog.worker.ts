@@ -1,5 +1,6 @@
 /** Worker-thread entrypoint for full model-catalog discovery. */
 import { parentPort, workerData } from "node:worker_threads";
+import type { AuthProfileStore } from "./auth-profiles/types.js";
 import {
   fingerprintPreparedModelCatalogGeneration,
   type PreparedModelCatalogWorkerInput,
@@ -11,6 +12,20 @@ import {
   prepareWorkspaceBuildGroup,
 } from "./prepared-model-runtime.facts.js";
 import { AuthStorage } from "./sessions/auth-storage.js";
+
+function projectWorkerAuthStore(
+  credentials: PreparedModelCatalogWorkerInput["credentials"],
+): AuthProfileStore {
+  return {
+    version: 1,
+    profiles: Object.fromEntries(
+      Object.entries(credentials).map(([provider, credential]) => [
+        `${provider}:default`,
+        { ...credential, provider },
+      ]),
+    ),
+  };
+}
 
 export async function runPreparedModelCatalogWorkerInput(
   value: PreparedModelCatalogWorkerInput,
@@ -41,6 +56,7 @@ export async function runPreparedModelCatalogWorkerInput(
       prepared.pluginGeneration,
       "live",
       false,
+      { authStore: projectWorkerAuthStore(value.credentials) },
     );
     const facts = await prepareFullCatalogFacts(
       exactAgentFacts,

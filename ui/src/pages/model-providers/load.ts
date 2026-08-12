@@ -80,7 +80,10 @@ export async function loadModelProvidersData(
         (result) => ({ ok: true as const, result }),
         (error: unknown) => ({ ok: false as const, error }),
       ),
-      loadModels(client, opts).catch(() => null),
+      loadModels(client, {
+        ...(opts?.agentId ? { agentId: opts.agentId } : {}),
+        ...(opts?.refresh ? { refresh: true } : { preparedOnly: true }),
+      }).catch(() => null),
       opts?.refresh
         ? request<ModelProvidersCatalogResult>("models.list", {
             view: "all",

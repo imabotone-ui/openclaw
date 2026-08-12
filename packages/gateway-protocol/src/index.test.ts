@@ -1005,6 +1005,7 @@ describe("validateModelsListParams", () => {
       { view: "default" },
       { view: "configured" },
       { view: "all" },
+      { view: "configured", preparedOnly: true },
     ]);
   });
 

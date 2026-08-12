@@ -479,7 +479,7 @@ type BuildModelsListResultParams = {
     snapshot: ModelCatalogSnapshot;
   };
   catalogProjector?: ReturnType<typeof createGatewayAgentModelCatalogProjector>;
-  preloadedOnly?: boolean;
+  preparedOnly?: boolean;
   routeResolverFactory?: typeof createOpenAIModelRoutesResolver;
 };
 
@@ -489,6 +489,7 @@ export async function buildModelsListResult(
   const initialConfig = params.context.getRuntimeConfig();
   const initialAgentId = normalizeAgentId(params.agentId ?? resolveDefaultAgentId(initialConfig));
   const view = resolveModelsListView(params.params);
+  const preparedOnly = params.preparedOnly === true || params.params.preparedOnly === true;
   const preloadedCatalog =
     params.preloadedCatalog?.agentId === initialAgentId &&
     params.preloadedCatalog.config === initialConfig
@@ -524,12 +525,15 @@ export async function buildModelsListResult(
       // optional discovery. The paired projector carries the matching metadata and auth facts.
       if (
         preloadedCatalog &&
-        (loadedReadOnly || (params.preloadedOnly && params.catalogProjector !== undefined))
+        (loadedReadOnly || (preparedOnly && params.catalogProjector !== undefined))
       ) {
         usedPreloadedCatalog = true;
         return preloadedCatalog.snapshot;
       }
-      if (params.preloadedOnly) {
+      if (preparedOnly) {
+        if (preparedOwnerSnapshot) {
+          return preparedOwnerSnapshot;
+        }
         return { entries: [], routeVariants: [] };
       }
       loadedSnapshot = await params.context.loadGatewayModelCatalogSnapshot({

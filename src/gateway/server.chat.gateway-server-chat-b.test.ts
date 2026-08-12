@@ -1367,7 +1367,7 @@ describe("gateway server chat", () => {
                   config,
                   snapshot: catalogSnapshot,
                 },
-                preloadedOnly: true,
+                preparedOnly: true,
                 catalogProjector: projector,
               }),
             ]).then(([modelCatalog, metadata]) => ({

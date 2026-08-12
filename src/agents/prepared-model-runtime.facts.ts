@@ -651,7 +651,10 @@ export async function prepareAgentCatalogSource(
   pluginGeneration: PreparedModelRuntimePluginGeneration,
   catalogMode: PreparedModelRuntimeCatalogMode,
   persist = true,
-  sourceOptions: { providerDiscoveryProviderIds?: readonly string[] } = {},
+  sourceOptions: {
+    authStore?: import("./auth-profiles/types.js").AuthProfileStore;
+    providerDiscoveryProviderIds?: readonly string[];
+  } = {},
 ): Promise<PreparedModelRuntimeCatalogSource> {
   const { env, input, providerIds } = agentFacts;
   const providerOutcomes = new Map<string, ProviderCatalogOutcome>();
@@ -689,6 +692,7 @@ export async function prepareAgentCatalogSource(
   if (!persist) {
     const source = await planOpenClawModelsJsonSource(input.config, input.agentDir, {
       ...options,
+      ...(sourceOptions.authStore ? { authStore: sourceOptions.authStore } : {}),
       ...(catalogMode === "live" ? { onProviderCatalogOutcome: recordProviderOutcome } : {}),
     });
     return {

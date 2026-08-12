@@ -158,7 +158,7 @@ async function expectAvailable(
         config,
         snapshot: owner.modelCatalog,
       },
-      preloadedOnly: true,
+      preparedOnly: true,
       catalogProjector: projector,
     }),
   ]);

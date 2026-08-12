@@ -59,6 +59,8 @@ function requestModelsList(params: {
   reqId?: string;
   agentId?: string;
   includeProviderCapabilities?: boolean;
+  preparedOnly?: boolean;
+  preparedCatalog?: Array<Record<string, unknown>>;
 }) {
   const respond = params.respond ?? vi.fn();
   const runtimeConfig = params.runtimeConfig ?? ({} as OpenClawConfig);
@@ -75,12 +77,14 @@ function requestModelsList(params: {
         view: params.view,
         ...(params.agentId ? { agentId: params.agentId } : {}),
         ...(params.includeProviderCapabilities ? { includeProviderCapabilities: true } : {}),
+        ...(params.preparedOnly ? { preparedOnly: true } : {}),
       },
     },
     params: {
       view: params.view,
       ...(params.agentId ? { agentId: params.agentId } : {}),
       ...(params.includeProviderCapabilities ? { includeProviderCapabilities: true } : {}),
+      ...(params.preparedOnly ? { preparedOnly: true } : {}),
     },
     respond: respond as RespondFn,
     client: null,
@@ -110,8 +114,8 @@ function requestModelsList(params: {
           workspaceDir: "/tmp/models-list-workspace",
           config,
           metadataSnapshot: loadPluginMetadataSnapshot({ config }),
-          entries: [],
-          routeVariants: [],
+          entries: params.preparedCatalog ?? [],
+          routeVariants: params.preparedCatalog ?? [],
         };
       },
       logGateway: {
@@ -145,6 +149,48 @@ describe("models.list", () => {
 
     expect(loadGatewayModelCatalog).toHaveBeenCalledWith(
       expect.objectContaining({ agentId: "writer" }),
+    );
+  });
+
+  it("keeps prepared-only configured wildcard reads off full discovery", async () => {
+    const loadGatewayModelCatalog = vi.fn(() => Promise.resolve([]));
+    const preparedCatalog = [{ id: "prepared", name: "Prepared", provider: "vllm" }];
+    const { request, respond } = requestModelsList({
+      view: "configured",
+      preparedOnly: true,
+      preparedCatalog,
+      runtimeConfig: {
+        agents: { defaults: { modelPolicy: { allow: ["vllm/*"] } } },
+        models: {
+          providers: {
+            vllm: {
+              api: "openai-completions",
+              baseUrl: "http://127.0.0.1:8000/v1",
+              models: [
+                {
+                  id: "prepared",
+                  name: "Prepared",
+                  reasoning: false,
+                  input: ["text"],
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                  contextWindow: 128_000,
+                  maxTokens: 4096,
+                },
+              ],
+            },
+          },
+        },
+      },
+      loadGatewayModelCatalog,
+    });
+
+    await request;
+
+    expect(loadGatewayModelCatalog).not.toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      { models: [expect.objectContaining({ id: "prepared", provider: "vllm" })] },
+      undefined,
     );
   });
 

@@ -41,6 +41,22 @@ module.exports = {
       id: ${JSON.stringify(PROVIDER_ID)},
       label: "Worker catalog fixture",
       auth: [],
+      catalog: {
+        run: async (context) => {
+          const hasAuth = context.resolveProviderApiKey(${JSON.stringify(PROVIDER_ID)}).apiKey === ${JSON.stringify(MATERIALIZED_SECRET)};
+          return {
+            provider: {
+              baseUrl: "https://worker-catalog.invalid/v1",
+              api: "openai-completions",
+              apiKey: "WORKER_CATALOG_API_KEY",
+              models: [
+                { id: "sqlite-model", name: "SQLite model" },
+                { id: \`catalog-auth-\${hasAuth}\`, name: "Catalog auth proof" },
+              ],
+            },
+          };
+        },
+      },
       augmentModelCatalog(context) {
         fs.appendFileSync(process.env.OPENCLAW_WORKER_CATALOG_MARKER, "start\\n");
         const until = Date.now() + ${params.spinMs};
@@ -69,7 +85,10 @@ module.exports = {
       id: PLUGIN_ID,
       providers: [PROVIDER_ID],
       configSchema: { type: "object", additionalProperties: false, properties: {} },
-      modelCatalog: { runtimeAugment: true },
+      modelCatalog: {
+        discovery: { [PROVIDER_ID]: "runtime" },
+        runtimeAugment: true,
+      },
     }),
     "utf8",
   );
@@ -180,6 +199,9 @@ describe("prepared model catalog worker boundary", () => {
         provider: PROVIDER_ID,
         id: "proof-sqlite-true-auth-true-unrelated-false",
       }),
+    );
+    expect(catalog?.entries).toContainEqual(
+      expect.objectContaining({ provider: PROVIDER_ID, id: "catalog-auth-true" }),
     );
     await expect(fixture.snapshot.loadFullModelCatalog?.()).resolves.toBe(catalog);
     expect(fs.readFileSync(fixture.marker, "utf8")).toBe("start\ndone\n");

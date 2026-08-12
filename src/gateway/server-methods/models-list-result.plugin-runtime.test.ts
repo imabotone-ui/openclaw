@@ -113,7 +113,7 @@ describe("models.list plugin metadata handoff", () => {
           agentId: "main",
           params: { view: "configured" },
           preloadedCatalog: { agentId: "main", config: cfg, snapshot },
-          preloadedOnly: true,
+          preparedOnly: true,
           catalogProjector: projector,
         });
 

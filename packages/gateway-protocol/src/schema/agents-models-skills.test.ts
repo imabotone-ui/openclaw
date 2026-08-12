@@ -184,6 +184,7 @@ describe("ModelsListParamsSchema", () => {
         agentId: "writer",
         view: "all",
         includeProviderCapabilities: true,
+        preparedOnly: true,
       },
     );
     expectRejected(ModelsListParamsSchema, { view: "provider-route" });

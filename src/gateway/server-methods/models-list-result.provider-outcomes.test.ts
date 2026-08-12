@@ -106,7 +106,7 @@ describe("models.list provider catalog outcomes", () => {
         agentId: "main",
         params: { view: "configured" },
         preloadedCatalog: { agentId: "main", config, snapshot },
-        preloadedOnly: true,
+        preparedOnly: true,
         catalogProjector: projector,
       }),
     ).resolves.toEqual({

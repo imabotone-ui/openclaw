@@ -30,6 +30,10 @@ describe("loadModelProvidersData", () => {
           method === "models.list" && (params as { view?: string } | undefined)?.view === "all",
       ),
     ).toHaveLength(0);
+    expect(request).toHaveBeenCalledWith("models.list", {
+      view: "configured",
+      preparedOnly: true,
+    });
     expect(result.providerOutcomes).toEqual([]);
   });
 

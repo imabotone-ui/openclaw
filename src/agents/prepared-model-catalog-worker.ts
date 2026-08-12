@@ -180,7 +180,10 @@ export function runPreparedModelCatalogWorker(params: {
     }, PREPARED_MODEL_CATALOG_WORKER_GENERATION_POLL_MS);
     generationPoll.unref?.();
 
-    const settle = (finish: () => void, terminate: boolean) => {
+    type WorkerOutcome =
+      | { status: "resolved"; snapshot: ModelCatalogSnapshot }
+      | { status: "rejected"; error: Error };
+    const settle = (outcome: WorkerOutcome, terminate = true) => {
       if (settled) {
         return;
       }
@@ -188,12 +191,31 @@ export function runPreparedModelCatalogWorker(params: {
       clearTimeout(timeout);
       clearInterval(generationPoll);
       worker.removeAllListeners();
-      if (terminate) {
-        void worker.terminate();
+      const finish = () => {
+        if (outcome.status === "resolved") {
+          resolve(markPreparedModelCatalogFull(outcome.snapshot));
+        } else {
+          reject(outcome.error);
+        }
+      };
+      if (!terminate) {
+        finish();
+        return;
       }
-      finish();
+      void worker.terminate().then(finish, (terminationError: unknown) => {
+        const error =
+          terminationError instanceof Error
+            ? terminationError
+            : new Error(String(terminationError));
+        reject(
+          outcome.status === "rejected"
+            ? new AggregateError([outcome.error, error], outcome.error.message)
+            : new Error("prepared model catalog worker termination failed", { cause: error }),
+        );
+      });
     };
-    const fail = (error: Error, terminate = true) => settle(() => reject(error), terminate);
+    const fail = (error: Error, terminate = true) =>
+      settle({ status: "rejected", error }, terminate);
 
     worker.once("message", (message: PreparedModelCatalogWorkerResult) => {
       if (!params.isCurrent()) {
@@ -201,14 +223,14 @@ export function runPreparedModelCatalogWorker(params: {
         return;
       }
       if (message.status === "failed") {
-        fail(new Error(message.error), false);
+        fail(new Error(message.error));
         return;
       }
       if (message.generationFingerprint !== params.input.generationFingerprint) {
-        fail(new Error("prepared model catalog worker returned a stale generation"), false);
+        fail(new Error("prepared model catalog worker returned a stale generation"));
         return;
       }
-      settle(() => resolve(markPreparedModelCatalogFull(message.snapshot)), false);
+      settle({ status: "resolved", snapshot: message.snapshot });
     });
     worker.once("error", (error) => {
       fail(new Error(error instanceof Error ? error.message : String(error)));

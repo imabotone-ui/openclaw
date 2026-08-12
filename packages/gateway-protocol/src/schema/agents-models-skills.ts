@@ -223,6 +223,8 @@ export const AgentsFilesSetResultSchema = closedObject({
 export const ModelsListParamsSchema = closedObject({
   agentId: Type.Optional(Type.String()),
   includeProviderCapabilities: Type.Optional(Type.Boolean()),
+  /** Restricts the response to the already-published lifecycle snapshot. */
+  preparedOnly: Type.Optional(Type.Boolean()),
   view: Type.Optional(
     Type.Union([
       Type.Literal("default"),
