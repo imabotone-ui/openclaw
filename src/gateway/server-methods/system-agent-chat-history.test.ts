@@ -63,7 +63,7 @@ describe("openclaw.chat.history wizard recovery", () => {
     transcriptStoreMocks.readTranscriptTail.mockReset().mockReturnValue(turns);
   });
 
-  it("captures the sanitized server-owned step for a typed answer", async () => {
+  it("captures a receipt-safe step projection for a typed answer", async () => {
     const step = {
       id: "slack-mode",
       type: "select" as const,
@@ -76,7 +76,39 @@ describe("openclaw.chat.history wizard recovery", () => {
         { activeWizardStep: vi.fn().mockResolvedValue(step) },
         { sessionId: "slack-session", wizardAnswer: { stepId: step.id, value: "bot" } },
       ),
-    ).resolves.toEqual({ kind: "answer", step });
+    ).resolves.toEqual({
+      kind: "answer",
+      step: {
+        id: "slack-mode",
+        type: "select",
+        message: "How should OpenClaw appear in Slack?",
+      },
+    });
+  });
+
+  it("omits device authorization material from durable receipt metadata", async () => {
+    await expect(
+      captureSystemAgentWizardAction(
+        {
+          activeWizardStep: vi.fn().mockResolvedValue({
+            id: "device-auth",
+            type: "note",
+            title: "Link device",
+            message: "Open https://auth.example.test/device and enter ABCD-1234. Never share it.",
+            externalUrl: "https://auth.example.test/device?token=secret",
+            deviceCode: {
+              code: "ABCD-1234",
+              expiresInMinutes: 15,
+              message: "Never share this code.",
+            },
+          }),
+        },
+        { sessionId: "device-session", wizardCancel: { stepId: "device-auth" } },
+      ),
+    ).resolves.toEqual({
+      kind: "cancel",
+      step: { id: "device-auth", type: "note" },
+    });
   });
 
   it("persists session scope and action metadata on the matching user turn", () => {

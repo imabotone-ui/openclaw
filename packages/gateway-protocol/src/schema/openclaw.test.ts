@@ -162,7 +162,6 @@ describe("OpenClaw chat history protocol", () => {
           id: "slack-mode",
           type: "select",
           message: "How should OpenClaw appear in Slack?",
-          options: [{ label: "Slack bot", value: "bot" }],
         },
       },
     };
@@ -170,6 +169,23 @@ describe("OpenClaw chat history protocol", () => {
     expect(
       Value.Check(SystemAgentChatHistoryResultSchema, {
         turns: [{ ...turn, wizardAction: { ...turn.wizardAction, kind: "unknown" } }],
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(SystemAgentChatHistoryResultSchema, {
+        turns: [
+          {
+            ...turn,
+            wizardAction: {
+              ...turn.wizardAction,
+              step: {
+                ...turn.wizardAction.step,
+                externalUrl: "https://auth.example.test/device?token=secret",
+                deviceCode: { code: "ABCD-1234" },
+              },
+            },
+          },
+        ],
       }),
     ).toBe(false);
   });

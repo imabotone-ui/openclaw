@@ -137,7 +137,6 @@ describe("system-agent transcript store", () => {
               id: "slack-mode",
               type: "select",
               message: "How should OpenClaw appear in Slack?",
-              options: [{ label: "Slack bot", value: "bot" }],
             },
           },
         },

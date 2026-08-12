@@ -2,6 +2,7 @@ import {
   validateSystemAgentChatHistoryParams,
   type SystemAgentChatHistoryWizardAction,
   type SystemAgentChatParams,
+  type WizardStep,
 } from "../../../packages/gateway-protocol/src/index.js";
 import type { SystemAgentChatEngine } from "../../system-agent/chat-engine.js";
 import { resolveSystemAgentDelegationKey } from "../../system-agent/delegation-session.js";
@@ -13,6 +14,18 @@ import { assertValidParams } from "./validation.js";
 
 const DEFAULT_SYSTEM_AGENT_HISTORY_LIMIT = 100;
 
+function projectWizardReceiptStep(step: WizardStep): SystemAgentChatHistoryWizardAction["step"] {
+  // Auth controls mirror one-time codes and URLs into their prompt copy. Active recovery
+  // owns the full live step; durable receipts keep only ordinary, non-sensitive prompts.
+  const promptIsDurable = !step.sensitive && !step.deviceCode && !step.externalUrl;
+  return {
+    id: step.id,
+    type: step.type,
+    ...(promptIsDurable && step.title ? { title: step.title } : {}),
+    ...(promptIsDurable && step.message ? { message: step.message } : {}),
+  };
+}
+
 export async function captureSystemAgentWizardAction(
   engine: Pick<SystemAgentChatEngine, "activeWizardStep">,
   input: SystemAgentChatParams,
@@ -23,7 +36,7 @@ export async function captureSystemAgentWizardAction(
     return undefined;
   }
   const step = await engine.activeWizardStep();
-  return step?.id === stepId ? { kind, step } : undefined;
+  return step?.id === stepId ? { kind, step: projectWizardReceiptStep(step) } : undefined;
 }
 
 export function persistSystemAgentEngineHistory(

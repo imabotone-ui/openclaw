@@ -115,10 +115,16 @@ export const SystemAgentChatHistoryParamsSchema = closedObject({
   sessionId: Type.Optional(NonEmptyString),
 });
 
+const SystemAgentChatHistoryReceiptStepSchema = Type.Pick(
+  WizardStepSchema,
+  ["id", "type", "title", "message"],
+  { additionalProperties: false },
+);
+
 export const SystemAgentChatHistoryWizardActionSchema = closedObject({
   kind: Type.Union([Type.Literal("answer"), Type.Literal("cancel")]),
-  /** Sanitized server-owned step the submitted control answered. */
-  step: WizardStepSchema,
+  /** Receipt-only projection of the server-owned step the submitted control answered. */
+  step: SystemAgentChatHistoryReceiptStepSchema,
 });
 
 export const SystemAgentChatHistoryTurnSchema = closedObject({
