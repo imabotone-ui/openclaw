@@ -222,6 +222,7 @@ describe("custodian page", () => {
         sessionId: "cancel-wizard-session",
         reply: "Channel setup cancelled.",
         action: "none",
+        wizardActionAccepted: true,
       });
     const { context } = createContext(request);
     const { page } = await mountPage(context);

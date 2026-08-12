@@ -439,6 +439,7 @@ suite.define(() => {
           sessionId: "e2e-rich-wizard",
           reply: "Choose features.",
           action: "none",
+          wizardActionAccepted: true,
           wizardInputPending: true,
           step: {
             id: "features",
@@ -462,6 +463,7 @@ suite.define(() => {
           sessionId: "e2e-rich-wizard",
           reply: "Enter the secret.",
           action: "none",
+          wizardActionAccepted: true,
           sensitive: true,
           wizardInputPending: true,
           step: {
@@ -488,6 +490,7 @@ suite.define(() => {
           sessionId: "e2e-rich-wizard",
           reply: "Name this connection.",
           action: "none",
+          wizardActionAccepted: true,
           wizardInputPending: true,
           step: {
             id: "label",
@@ -522,6 +525,7 @@ suite.define(() => {
           sessionId: "e2e-rich-wizard",
           reply: "Confirm setup.",
           action: "none",
+          wizardActionAccepted: true,
           wizardInputPending: true,
           step: {
             id: "confirm",
@@ -556,6 +560,7 @@ suite.define(() => {
           sessionId: "e2e-rich-wizard",
           reply: "Setup complete.",
           action: "none",
+          wizardActionAccepted: true,
         });
         await page.getByText("Setup complete.").waitFor();
         expect(
@@ -697,6 +702,7 @@ suite.define(() => {
         sessionId: "e2e-reload-wizard",
         reply: "Twitch setup cancelled.",
         action: "none",
+        wizardActionAccepted: true,
       });
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await page.getByText("Twitch setup cancelled.").waitFor();

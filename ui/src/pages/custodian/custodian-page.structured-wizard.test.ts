@@ -64,6 +64,56 @@ describe("custodian structured wizard", () => {
     expect(page.querySelector(".chat-group.user")).toBeNull();
   });
 
+  it("keeps an omitted older-Gateway action confirmation unconfirmed", async () => {
+    const step = {
+      id: "port",
+      type: "text" as const,
+      message: "Gateway port",
+    };
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sessionId: "legacy-validation-session",
+        reply: "Enter a port.",
+        action: "none",
+        wizardInputPending: true,
+        step,
+      })
+      .mockResolvedValueOnce({
+        sessionId: "legacy-validation-session",
+        reply: "Enter port 18789.",
+        action: "none",
+        wizardInputPending: true,
+        step,
+      });
+    const { context } = createContext(request);
+    const { page } = await mountPage(context);
+
+    const input = await waitForFast(() => {
+      const element = page.querySelector<HTMLInputElement>(
+        '.custodian__wizard-step input[name="wizard-text"]',
+      );
+      expect(element).not.toBeNull();
+      return element!;
+    });
+    input.value = "banana";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await page.updateComplete;
+    page.querySelector<HTMLButtonElement>(".custodian__wizard-step .btn.primary")!.click();
+
+    await waitForFast(() => expect(page.textContent).toContain("Enter port 18789."));
+    expect(page.querySelector(".custodian__structured-response-status")?.textContent).toBe(
+      "Answer sent; confirmation unavailable",
+    );
+    expect(page.textContent).not.toContain("Answer submitted");
+    expect(page.querySelector(".custodian__wizard-step")).not.toBeNull();
+    expect(
+      [...page.querySelectorAll<HTMLButtonElement>("button")].some(
+        (candidate) => candidate.textContent?.trim() === "Restart setup",
+      ),
+    ).toBe(true);
+  });
+
   it("recovers an uncertain answer from history without replaying it", async () => {
     const step = { id: "port", type: "text" as const, message: "Gateway port" };
     const nextStep = { id: "agent-name", type: "text" as const, message: "Agent name" };

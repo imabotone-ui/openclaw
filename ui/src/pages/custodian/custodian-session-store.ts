@@ -49,6 +49,10 @@ function hasCustodianUserInput(params: SystemAgentChatParams): boolean {
   );
 }
 
+function hasCustodianWizardAction(params: SystemAgentChatParams): boolean {
+  return params.wizardAnswer !== undefined || params.wizardCancel !== undefined;
+}
+
 type StoreListener = () => void;
 type ConfiguredInferenceState = "unresolved" | "required" | "ready";
 type CustodianSetupIssue = "missing" | "unavailable";
@@ -709,7 +713,12 @@ export class CustodianSessionStore extends CustodianTranscriptState {
       } else if (result.action === "exit") {
         this.exitSetup();
       }
-      return result.wizardActionAccepted === false ? "rejected" : "sent";
+      if (result.wizardActionAccepted === false) {
+        return "rejected";
+      }
+      return hasCustodianWizardAction(params) && result.wizardActionAccepted !== true
+        ? "unknown"
+        : "sent";
     } catch (error) {
       if (epoch === this.requestEpoch && client === this.activeClient) {
         this.error = custodianErrorMessage(error);
