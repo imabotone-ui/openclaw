@@ -96,6 +96,8 @@ const CURRENT_TRAIN_METHODS = [
   "secrets.store.delete",
   "users.prefs.get",
   "users.prefs.set",
+  "device.scopes.requestUpgrade",
+  "device.scopes.waitUpgrade",
 ] as const;
 
 describe("core gateway method release trains", () => {
