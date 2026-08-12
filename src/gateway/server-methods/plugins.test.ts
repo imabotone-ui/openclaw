@@ -545,6 +545,17 @@ describe("plugin management Gateway handlers", () => {
       code: "INVALID_REQUEST",
       message: expect.stringContaining("does not match this plugin"),
     });
+
+    const retryAfterMismatch = await callHandler("plugins.install", {
+      source: "official",
+      pluginId: "diffs",
+      installPolicyWarningAcknowledgement: acknowledgementToken,
+    });
+
+    expect(retryAfterMismatch.error).toMatchObject({
+      code: "INVALID_REQUEST",
+      message: expect.stringContaining("expired or does not match this plugin"),
+    });
     expect(managementMocks.install).toHaveBeenCalledOnce();
   });
 

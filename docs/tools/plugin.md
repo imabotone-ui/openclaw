@@ -156,9 +156,10 @@ fails closed and requires interactive review.
 Gateway `plugins.install` clients receive structured warning details when the
 Gateway can bind the request to an immutable resolved artifact, and may make
 one explicit retry with the returned `acknowledgementToken` as
-`installPolicyWarningAcknowledgement`. The Gateway consumes that server-issued
-token once and only for the same install request and resolved artifact. OpenClaw
-re-evaluates the staged source and continues when that fresh evaluation allows
+`installPolicyWarningAcknowledgement`. Every presentation consumes the token,
+including an expired or wrong-request attempt; only its first presentation can
+authorize the same install request and resolved artifact. OpenClaw re-evaluates
+the staged source and continues when that fresh evaluation allows
 the install or repeats the unchanged warning the operator approved.
 Treat `acknowledgementToken` as a short-lived bearer secret. It is not bound to
 the Gateway connection, device, or operator that received it: any authenticated
