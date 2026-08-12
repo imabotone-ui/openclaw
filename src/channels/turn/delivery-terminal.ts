@@ -11,20 +11,9 @@ import {
 } from "../../infra/outbound/outbound-audit.js";
 import { normalizeChatType } from "../chat-type.js";
 import { isChannelPartialDeliveryError } from "./delivery-result.js";
+import type { ChannelDeliveryTerminal } from "./delivery-terminal.types.js";
 
-export type ChannelDeliveryTerminal =
-  | { outcome: "delivered" }
-  | {
-      outcome: "failed";
-      retryable: boolean;
-      error?: { code?: string };
-    }
-  | {
-      outcome: "partial_failure";
-      retryable: false;
-      error?: { code?: string };
-    }
-  | { outcome: "unknown"; retryable: false };
+export type { ChannelDeliveryTerminal } from "./delivery-terminal.types.js";
 
 /** Classifies one settled delivery failure without exposing its raw error graph. */
 export function resolveChannelDeliveryFailureTerminal(params: {

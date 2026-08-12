@@ -1,4 +1,4 @@
-import type { ChannelDeliveryTerminal } from "../../channels/turn/delivery-terminal.js";
+import type { ChannelDeliveryTerminal } from "../../channels/turn/delivery-terminal.types.js";
 // Shared type contracts for dispatch-from-config runtime execution.
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { SourceReplyDeliveryMode } from "../get-reply-options.types.js";

@@ -1,8 +1,6 @@
 import { isChannelPartialDeliveryError } from "../channels/turn/delivery-result.js";
-import {
-  resolveChannelDeliveryFailureTerminal,
-  type ChannelDeliveryTerminal,
-} from "../channels/turn/delivery-terminal.js";
+import { resolveChannelDeliveryFailureTerminal } from "../channels/turn/delivery-terminal.js";
+import type { ChannelDeliveryTerminal } from "../channels/turn/delivery-terminal.types.js";
 import type { DispatchFromConfigResult } from "./reply/dispatch-from-config.types.js";
 import { readReplyDispatcherDeliveryFailures } from "./reply/reply-dispatcher-delivery-failures.js";
 import type { ReplyDispatcher } from "./reply/reply-dispatcher.types.js";

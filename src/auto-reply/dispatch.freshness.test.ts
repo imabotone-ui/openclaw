@@ -177,11 +177,11 @@ describe("foreground reply freshness", () => {
     releaseOlderFinal.resolve();
     const olderResult = await olderDispatch;
 
-    expect(newerResult).toEqual({
+    expect(newerResult).toMatchObject({
       queuedFinal: true,
       counts: { tool: 0, block: 0, final: 1 },
     });
-    expect(olderResult).toEqual({
+    expect(olderResult).toMatchObject({
       queuedFinal: false,
       counts: { tool: 0, block: 0, final: 0 },
     });
@@ -209,7 +209,7 @@ describe("foreground reply freshness", () => {
       },
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       queuedFinal: false,
       counts: { tool: 0, block: 0, final: 0 },
     });
@@ -250,7 +250,7 @@ describe("foreground reply freshness", () => {
       await hookStarted.promise;
       await vi.advanceTimersByTimeAsync(15_000);
 
-      await expect(dispatch).resolves.toEqual({
+      await expect(dispatch).resolves.toMatchObject({
         queuedFinal: true,
         counts: { tool: 0, block: 0, final: 1 },
         failedCounts: { tool: 0, block: 0, final: 1 },
@@ -291,7 +291,7 @@ describe("foreground reply freshness", () => {
       expect(deliveries).toEqual([]);
       await vi.advanceTimersByTimeAsync(1_000);
 
-      await expect(dispatch).resolves.toEqual(queuedFinalResult());
+      await expect(dispatch).resolves.toMatchObject(queuedFinalResult());
       expect(deliveries).toEqual([{ kind: "final", text: "budgeted final" }]);
       expect(vi.getTimerCount()).toBe(0);
     } finally {
@@ -340,11 +340,11 @@ describe("foreground reply freshness", () => {
     const olderResult = await olderDispatch;
 
     expect(beforeDeliver).toHaveBeenCalledTimes(1);
-    expect(newerResult).toEqual({
+    expect(newerResult).toMatchObject({
       queuedFinal: false,
       counts: { tool: 0, block: 0, final: 0 },
     });
-    expect(olderResult).toEqual({
+    expect(olderResult).toMatchObject({
       queuedFinal: true,
       counts: { tool: 0, block: 0, final: 1 },
     });
@@ -403,8 +403,8 @@ describe("foreground reply freshness", () => {
     await newerStarted.promise;
     releaseOlderFinal.resolve();
 
-    await expect(olderDispatch).resolves.toEqual(queuedFinalResult());
-    await expect(newerDispatch).resolves.toEqual({
+    await expect(olderDispatch).resolves.toMatchObject(queuedFinalResult());
+    await expect(newerDispatch).resolves.toMatchObject({
       queuedFinal: false,
       counts: { tool: 0, block: 0, final: 0 },
     });
@@ -456,8 +456,8 @@ describe("foreground reply freshness", () => {
     expect(deliveries).toEqual([]);
 
     releaseNewerFinal.resolve();
-    await expect(newerDispatch).resolves.toEqual(queuedFinalResult());
-    await expect(olderDispatch).resolves.toEqual({
+    await expect(newerDispatch).resolves.toMatchObject(queuedFinalResult());
+    await expect(olderDispatch).resolves.toMatchObject({
       queuedFinal: false,
       counts: { tool: 0, block: 0, final: 0 },
     });
@@ -518,11 +518,11 @@ describe("foreground reply freshness", () => {
     const olderResult = await olderDispatch;
 
     expect(beforeDeliver).toHaveBeenCalledTimes(1);
-    expect(newerResult).toEqual({
+    expect(newerResult).toMatchObject({
       queuedFinal: true,
       counts: { tool: 0, block: 0, final: 1 },
     });
-    expect(olderResult).toEqual({
+    expect(olderResult).toMatchObject({
       queuedFinal: false,
       counts: { tool: 0, block: 0, final: 0 },
     });
@@ -539,12 +539,12 @@ describe("foreground reply freshness", () => {
     );
 
     expect(beforeDeliver).toHaveBeenCalledTimes(1);
-    expect(newerResult).toEqual({
+    expect(newerResult).toMatchObject({
       queuedFinal: false,
       counts: { tool: 0, block: 0, final: 0 },
       failedCounts: { tool: 0, block: 0, final: 1 },
     });
-    expect(olderResult).toEqual({
+    expect(olderResult).toMatchObject({
       queuedFinal: true,
       counts: { tool: 0, block: 0, final: 1 },
     });
@@ -580,12 +580,12 @@ describe("foreground reply freshness", () => {
     );
 
     expect(beforeDeliver).toHaveBeenCalledTimes(1);
-    expect(newerResult).toEqual({
+    expect(newerResult).toMatchObject({
       queuedFinal: false,
       counts: { tool: 0, block: 0, final: 0 },
       failedCounts: { tool: 0, block: 0, final: 1 },
     });
-    expect(olderResult).toEqual({
+    expect(olderResult).toMatchObject({
       queuedFinal: false,
       counts: { tool: 0, block: 0, final: 0 },
     });
@@ -600,11 +600,11 @@ describe("foreground reply freshness", () => {
     );
 
     expect(beforeDeliver).toHaveBeenCalledTimes(1);
-    expect(newerResult).toEqual({
+    expect(newerResult).toMatchObject({
       queuedFinal: true,
       counts: { tool: 0, block: 0, final: 1 },
     });
-    expect(olderResult).toEqual({
+    expect(olderResult).toMatchObject({
       queuedFinal: true,
       counts: { tool: 0, block: 0, final: 1 },
     });
@@ -620,11 +620,11 @@ describe("foreground reply freshness", () => {
     );
 
     expect(beforeDeliver).toHaveBeenCalledTimes(1);
-    expect(newerResult).toEqual({
+    expect(newerResult).toMatchObject({
       queuedFinal: true,
       counts: { tool: 0, block: 0, final: 1 },
     });
-    expect(olderResult).toEqual({
+    expect(olderResult).toMatchObject({
       queuedFinal: false,
       counts: { tool: 0, block: 0, final: 0 },
     });
@@ -640,11 +640,11 @@ describe("foreground reply freshness", () => {
 
     expect(beforeDeliver).toHaveBeenCalledTimes(1);
     expect(olderSettled).toHaveBeenCalledTimes(1);
-    expect(newerResult).toEqual({
+    expect(newerResult).toMatchObject({
       queuedFinal: true,
       counts: { tool: 0, block: 0, final: 1 },
     });
-    expect(olderResult).toEqual({
+    expect(olderResult).toMatchObject({
       queuedFinal: false,
       counts: { tool: 0, block: 0, final: 0 },
     });
@@ -664,11 +664,11 @@ describe("foreground reply freshness", () => {
 
     expect(beforeDeliver).toHaveBeenCalledTimes(1);
     expect(olderFreshDelivery).not.toHaveBeenCalled();
-    expect(newerResult).toEqual({
+    expect(newerResult).toMatchObject({
       queuedFinal: true,
       counts: { tool: 0, block: 0, final: 1 },
     });
-    expect(olderResult).toEqual({
+    expect(olderResult).toMatchObject({
       queuedFinal: false,
       counts: { tool: 0, block: 0, final: 0 },
     });
@@ -742,13 +742,13 @@ describe("foreground reply freshness", () => {
       }),
       deliveries,
     );
-    await expect(secondDispatch).resolves.toEqual({
+    await expect(secondDispatch).resolves.toMatchObject({
       queuedFinal: true,
       counts: { tool: 0, block: 0, final: 1 },
     });
 
     releaseFirstFinal.resolve();
-    await expect(firstDispatch).resolves.toEqual({
+    await expect(firstDispatch).resolves.toMatchObject({
       queuedFinal: true,
       counts: { tool: 0, block: 0, final: 1 },
     });

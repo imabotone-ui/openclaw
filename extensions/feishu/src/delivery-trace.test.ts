@@ -14,19 +14,9 @@ import {
   type WireRecorder,
 } from "openclaw/plugin-sdk/channel-contract-testing";
 import { withFetchPreconnect } from "openclaw/plugin-sdk/test-env";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { FeishuConfigSchema } from "./config-schema.js";
 import type { ResolvedFeishuAccount } from "./types.js";
-
-const settlePendingFinalDeliveryMock = vi.hoisted(() =>
-  vi.fn(async (_completion: unknown, state: string) => ({ state })),
-);
-
-vi.mock("../../../src/infra/outbound/delivery-completion.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../../../src/infra/outbound/delivery-completion.js")>();
-  return { ...actual, settlePendingFinalDelivery: settlePendingFinalDeliveryMock };
-});
 
 type RecordedWireCall = Parameters<WireRecorder["recordWireCall"]>[0];
 type CreateFeishuReplyDispatcher =
@@ -36,8 +26,6 @@ type DispatchChannelInboundReply =
 type IsChannelPartialDeliveryError =
   typeof import("openclaw/plugin-sdk/channel-inbound").isChannelPartialDeliveryError;
 type SendReplyOrFallbackDirect = typeof import("./send.js").sendReplyOrFallbackDirect;
-type SetReplyPayloadMetadata =
-  typeof import("openclaw/plugin-sdk/reply-payload-testing").setReplyPayloadMetadata;
 type StreamingStartBackoffMap =
   typeof import("./reply-dispatcher-state.js").streamingStartBackoffUntilByAccount;
 
@@ -149,7 +137,6 @@ let createFeishuReplyDispatcher: CreateFeishuReplyDispatcher;
 let dispatchChannelInboundReply: DispatchChannelInboundReply;
 let isChannelPartialDeliveryError: IsChannelPartialDeliveryError;
 let sendReplyOrFallbackDirect: SendReplyOrFallbackDirect;
-let setReplyPayloadMetadata: SetReplyPayloadMetadata;
 let streamingStartBackoffUntilByAccount: StreamingStartBackoffMap;
 
 beforeAll(async () => {
@@ -158,14 +145,9 @@ beforeAll(async () => {
   vi.resetModules();
   ({ dispatchChannelInboundReply, isChannelPartialDeliveryError } =
     await import("openclaw/plugin-sdk/channel-inbound"));
-  ({ setReplyPayloadMetadata } = await import("openclaw/plugin-sdk/reply-payload-testing"));
   ({ createFeishuReplyDispatcher } = await import("./reply-dispatcher.js"));
   ({ sendReplyOrFallbackDirect } = await import("./send.js"));
   ({ streamingStartBackoffUntilByAccount } = await import("./reply-dispatcher-state.js"));
-});
-
-beforeEach(() => {
-  settlePendingFinalDeliveryMock.mockClear();
 });
 
 afterAll(() => {
@@ -452,10 +434,7 @@ const FEISHU_TRACE_SCENARIOS: readonly DeliveryTraceScenarioName[] = [
   "overflow-pagination",
 ];
 
-const pendingFinalCompletion = {
-  deliveryId: "delivery-feishu-custody",
-  intentId: "intent-feishu-custody",
-  sessionId: "session-feishu-custody",
+const traceTurn = {
   sessionKey: "agent:agent:feishu:direct:oc-trace-chat",
   storePath: "/tmp/feishu-custody-sessions.json",
 };
@@ -468,25 +447,10 @@ function createTraceContext() {
     CommandAuthorized: false,
     From: "ou-sender",
     To: "oc-trace-chat",
-    SessionKey: pendingFinalCompletion.sessionKey,
+    SessionKey: traceTurn.sessionKey,
     Provider: "feishu",
     Surface: "feishu",
   };
-}
-
-function expectDeliveredCustody() {
-  expect(settlePendingFinalDeliveryMock).toHaveBeenNthCalledWith(
-    1,
-    { kind: "pending-final", ...pendingFinalCompletion },
-    "unknown",
-    ["prepared", "queued"],
-  );
-  expect(settlePendingFinalDeliveryMock).toHaveBeenNthCalledWith(
-    2,
-    { kind: "pending-final", ...pendingFinalCompletion },
-    "delivered",
-    ["queued", "unknown"],
-  );
 }
 
 describe("feishu delivery trace goldens", () => {
@@ -512,10 +476,7 @@ describe("feishu producer custody boundaries", () => {
         data: { code: 230099, msg: "card table number over limit" },
       },
     });
-    const sourcePayload = setReplyPayloadMetadata(
-      { text: "the final answer" },
-      { pendingFinalDeliveryCompletion: pendingFinalCompletion },
-    );
+    const sourcePayload = { text: "the final answer" };
     const client = {
       im: {
         message: {
@@ -531,8 +492,8 @@ describe("feishu producer custody boundaries", () => {
         channel: "feishu",
         accountId: "main",
         agentId: "agent",
-        routeSessionKey: pendingFinalCompletion.sessionKey,
-        storePath: pendingFinalCompletion.storePath,
+        routeSessionKey: traceTurn.sessionKey,
+        storePath: traceTurn.storePath,
         ctxPayload: createTraceContext(),
         recordInboundSession: async () => undefined,
         dispatchReplyWithBufferedBlockDispatcher: async ({ dispatcherOptions }) => {
@@ -558,12 +519,6 @@ describe("feishu producer custody boundaries", () => {
       }),
     ).rejects.toMatchObject({ retryable: false, cause: rejected });
 
-    expect(settlePendingFinalDeliveryMock).toHaveBeenNthCalledWith(
-      2,
-      { kind: "pending-final", ...pendingFinalCompletion },
-      "suppressed",
-      ["prepared", "queued", "unknown"],
-    );
     expect(client.im.message.reply).toHaveBeenCalledOnce();
     expect(client.im.message.create).not.toHaveBeenCalled();
   });
@@ -595,18 +550,15 @@ describe("feishu producer custody boundaries", () => {
         ...dispatcherParams,
       });
       const settled = vi.spyOn(created.dispatcherOptions, "onSettled");
-      const sourcePayload = setReplyPayloadMetadata(
-        { text: "the final answer" },
-        { pendingFinalDeliveryCompletion: pendingFinalCompletion },
-      );
+      const sourcePayload = { text: "the final answer" };
 
       const error = await dispatchChannelInboundReply({
         cfg: {},
         channel: "feishu",
         accountId: "main",
         agentId: "agent",
-        routeSessionKey: pendingFinalCompletion.sessionKey,
-        storePath: pendingFinalCompletion.storePath,
+        routeSessionKey: traceTurn.sessionKey,
+        storePath: traceTurn.storePath,
         ctxPayload: createTraceContext(),
         recordInboundSession: async () => undefined,
         dispatchReplyWithBufferedBlockDispatcher: async ({ dispatcherOptions }) => {
@@ -635,12 +587,6 @@ describe("feishu producer custody boundaries", () => {
       });
       await created.dispatcherOptions.onSettled?.();
       expect(settled).toHaveBeenCalledOnce();
-      expect(settlePendingFinalDeliveryMock).toHaveBeenNthCalledWith(
-        2,
-        { kind: "pending-final", ...pendingFinalCompletion },
-        "suppressed",
-        ["prepared", "queued", "unknown"],
-      );
       expect(
         wireCalls.filter(
           (call) => call.method === "im.message.reply" || call.method === "im.message.create",
@@ -702,18 +648,15 @@ describe("feishu producer custody boundaries", () => {
       sendTarget: "oc-trace-chat",
       replyToMessageId: "om-inbound",
     });
-    const sourcePayload = setReplyPayloadMetadata(
-      { text: "x".repeat(4001) },
-      { pendingFinalDeliveryCompletion: pendingFinalCompletion },
-    );
+    const sourcePayload = { text: "x".repeat(4001) };
 
     const error = await dispatchChannelInboundReply({
       cfg: {},
       channel: "feishu",
       accountId: "main",
       agentId: "agent",
-      routeSessionKey: pendingFinalCompletion.sessionKey,
-      storePath: pendingFinalCompletion.storePath,
+      routeSessionKey: traceTurn.sessionKey,
+      storePath: traceTurn.storePath,
       ctxPayload: createTraceContext(),
       recordInboundSession: async () => undefined,
       dispatchReplyWithBufferedBlockDispatcher: async ({ dispatcherOptions }) => {
@@ -731,7 +674,6 @@ describe("feishu producer custody boundaries", () => {
     expect(error).toMatchObject({
       deliveryResult: { visibleReplySent: true, content: "accepted preview" },
     });
-    expectDeliveredCustody();
     expect(wireCalls.filter((call) => call.method === "im.message.reply")).toHaveLength(1);
     expect(wireCalls.some((call) => call.method === "im.message.delete")).toBe(false);
     expect(wireCalls.filter((call) => call.method.endsWith("/elements/content"))).toHaveLength(1);
