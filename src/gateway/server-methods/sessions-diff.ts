@@ -9,6 +9,7 @@ import {
 import { resolveAgentWorkspaceDir } from "../../agents/agent-scope.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-key.js";
 import { applySessionDiffBaseline, loadCheckoutDiff } from "../../sessions/session-diff.js";
+import { resolveRequestedSessionAgentId } from "../session-request-agent.js";
 import { loadGatewaySessionEntryReadOnly } from "../session-utils.js";
 import type { GatewayRequestHandlers } from "./types.js";
 import { assertValidParams } from "./validation.js";
