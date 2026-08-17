@@ -16,6 +16,7 @@ import {
   getSubagentRunsSnapshotForRunIds,
 } from "./subagent-registry-state.js";
 import type { SubagentRunRecord, SwarmStructuredOutputState } from "./subagent-registry.types.js";
+import { recordSubagentWaitClaimInRuns } from "./subagent-wait-claim.js";
 
 export function createSubagentRegistryPublicApi(config: {
   runs: Map<string, SubagentRunRecord>;
@@ -196,11 +197,19 @@ export function createSubagentRegistryPublicApi(config: {
     requesterTurnRunId: string;
   }): number {
     restoreOnce();
-    return markRequesterTurnYieldedInRuns({
+    const marked = markRequesterTurnYieldedInRuns({
       ...params,
       runs,
       persistOrThrow,
     });
+    // Wait-claim ledger (step 1): durably record what this yield awaits before
+    // the turn ends. Additive alongside yield marking; no wake path reads it yet.
+    recordSubagentWaitClaimInRuns({
+      ...params,
+      runs,
+      persistOrThrow,
+    });
+    return marked;
   }
 
   return {
