@@ -604,6 +604,8 @@ describe("subagent registry lifecycle error grace", () => {
         requesterTurnRunId,
       }),
     ).toBe(2);
+    // Top-level requester: the yield pins the visible-reply contract onto the claim.
+    expect(betaBeforeYield.waitClaim?.requireVisibleReply).toBe(true);
     await settleYieldedCliTurn({
       requesterTurnRunId,
       acceptedSessionSpawns: [

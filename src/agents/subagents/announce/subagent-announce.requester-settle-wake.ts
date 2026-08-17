@@ -147,9 +147,6 @@ function readSharedBatchState(batch: readonly SubagentRunRecord[]): RequesterSet
     ...(states.some((state) => state.requesterYieldBatch === true)
       ? { requesterYieldBatch: true }
       : {}),
-    ...(states.some((state) => state.afterRequesterYield === true)
-      ? { afterRequesterYield: true }
-      : {}),
     ...(source?.rearmGeneration !== undefined ? { rearmGeneration: source.rearmGeneration } : {}),
     ...(source?.lastError !== undefined ? { lastError: source.lastError } : {}),
     deferralCount: Math.max(0, ...states.map((state) => state.deferralCount ?? 0)),
@@ -364,11 +361,8 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
   const hasUndeliveredRequiredCompletion = requiredSettled.some(
     (entry) => entry.delivery?.status !== "delivered",
   );
-  // Yield flags no longer gate the wake (the claim does); they still decide
-  // whether the wake must demand a visible final answer for the yielded turn.
-  const requesterYieldedAfterDelivery =
-    selectedState.afterRequesterYield === true ||
-    (selectedState.requesterYieldBatch === true && selectedState.rearmGeneration !== undefined);
+  // The visible-reply demand is pinned on the claim at yield time (see
+  // markRequesterTurnYielded); it is no longer recomputed here per attempt.
   const requesterDepth = getSubagentDepthFromSessionStore(requesterSessionKey, {
     cfg,
     agentId: requesterAgentId,
@@ -397,11 +391,7 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
   }
   const claimSatisfied = claimResolution.status === "satisfied";
   const isCronRequester = isCronSessionKey(requesterSessionKey);
-  // Explicit yield transfers continuation to this batch at every depth (same
-  // guard the ordinary push-path branch below applies) — a claim-gated nested
-  // requester that just yielded is not "ordinary nested" for this purpose.
-  const isNestedRequester =
-    !isCronRequester && !requesterYieldedAfterDelivery && requesterDepth >= 1;
+  const isNestedRequester = !isCronRequester && requesterDepth >= 1;
   if (!claimSatisfied) {
     // no_claim: the requester never yielded awaiting these children — claims
     // are turn-scoped and include already-delivered children, so any yield
@@ -464,9 +454,12 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
   const requesterSessionOrigin = normalizeDeliveryContext(params.requesterOrigin);
   const directOrigin = resolveAnnounceOrigin(requesterEntry, requesterSessionOrigin);
   const completionChannel = normalizeMessageChannel(directOrigin?.channel);
-  // A nested requester's "final answer" is its own completion message to its
-  // parent, not a user-visible reply; enforcing visibility would dead-end it.
-  const requireVisibleReply = requesterYieldedAfterDelivery && !isNestedRequester;
+  // Pinned at claim-write time (sessions_yield): a yield demands a visible
+  // final answer unless the requester is nested (its "final answer" is its own
+  // completion message to its parent — enforcing visibility would dead-end it).
+  // No-claim wakes never demand one: the requester never yielded awaiting this.
+  const requireVisibleReply =
+    claimResolution.status === "satisfied" && claimResolution.claim.requireVisibleReply === true;
   const wakeMessage = buildRequesterSettleWakeMessage({
     findings: preparedFindings.text,
     requireVisibleReply,
@@ -537,7 +530,6 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
         attemptCount: state.attemptCount + 1,
         batchRunIds,
         ...(state.requesterYieldBatch === true ? { requesterYieldBatch: true } : {}),
-        ...(state.afterRequesterYield === true ? { afterRequesterYield: true } : {}),
         ...(state.rearmGeneration !== undefined ? { rearmGeneration: state.rearmGeneration } : {}),
       };
       params.transitionBatch(settledBatch, state);
@@ -688,7 +680,6 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
         nextAttemptAt,
         batchRunIds,
         ...(state.requesterYieldBatch === true ? { requesterYieldBatch: true } : {}),
-        ...(state.afterRequesterYield === true ? { afterRequesterYield: true } : {}),
         ...(state.rearmGeneration !== undefined ? { rearmGeneration: state.rearmGeneration } : {}),
         lastError,
       };
@@ -745,7 +736,6 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
       nextAttemptAt,
       batchRunIds,
       ...(state.requesterYieldBatch === true ? { requesterYieldBatch: true } : {}),
-      ...(state.afterRequesterYield === true ? { afterRequesterYield: true } : {}),
       ...(state.rearmGeneration !== undefined ? { rearmGeneration: state.rearmGeneration } : {}),
       lastError,
     });

@@ -1018,7 +1018,6 @@ describe("subagent registry persistence resume", () => {
           expect(restored?.requesterSettleWake).toMatchObject({
             batchRunIds: [run.runId],
             requesterYieldBatch: true,
-            afterRequesterYield: true,
           });
         } else {
           expect(restored?.requesterSettleWake).toBeUndefined();

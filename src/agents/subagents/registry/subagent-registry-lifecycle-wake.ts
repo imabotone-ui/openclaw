@@ -260,6 +260,28 @@ const completeRequesterSettleWakeBatch = (
   }
 };
 
+export const markRequesterSettleWakePending = (
+  entry: SubagentRunRecord,
+  options?: { retireAfterSettle?: boolean },
+) => {
+  const existing = entry.requesterSettleWake;
+  entry.requesterSettleWake = {
+    status: existing?.status ?? "pending",
+    attemptCount: existing?.attemptCount ?? 0,
+    ...(existing?.replayCount !== undefined ? { replayCount: existing.replayCount } : {}),
+    ...(existing?.nextAttemptAt !== undefined ? { nextAttemptAt: existing.nextAttemptAt } : {}),
+    ...(existing?.batchRunIds ? { batchRunIds: [...existing.batchRunIds] } : {}),
+    ...(existing?.requesterYieldBatch === true ? { requesterYieldBatch: true } : {}),
+    ...(existing?.rearmGeneration !== undefined
+      ? { rearmGeneration: existing.rearmGeneration }
+      : {}),
+    ...(existing?.lastError !== undefined ? { lastError: existing.lastError } : {}),
+    ...(existing?.retireAfterSettle === true || options?.retireAfterSettle === true
+      ? { retireAfterSettle: true }
+      : {}),
+  } satisfies RequesterSettleWakeState;
+};
+
 const persistRequesterSettleWakePending = (
   context: SubagentLifecycleWakeContext,
   entry: SubagentRunRecord,

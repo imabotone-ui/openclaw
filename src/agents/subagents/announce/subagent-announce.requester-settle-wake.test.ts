@@ -379,7 +379,13 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
       return makeSettledChild({
         runId,
         requesterSessionKey,
-        waitClaim: { requesterSessionKey, awaitedRunIds, claimedAt: 5_000 },
+        waitClaim: {
+          requesterSessionKey,
+          awaitedRunIds,
+          claimedAt: 5_000,
+          // Mirror the writer's pin: nested requesters pin false, cron pins true.
+          requireVisibleReply: requesterSessionKey !== NESTED_REQUESTER,
+        },
         ...overrides,
       });
     }
@@ -497,7 +503,7 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
     ): SubagentRunRecord {
       return makeSettledChild({
         runId,
-        waitClaim: { requesterSessionKey: REQUESTER, awaitedRunIds, claimedAt: 5_000 },
+        waitClaim: { requesterSessionKey: REQUESTER, awaitedRunIds, claimedAt: 5_000, requireVisibleReply: true },
         ...overrides,
       });
     }
@@ -704,7 +710,12 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
     const child = makeSettledChild({
       runId: "run-b",
       delivery: { status: "delivered" },
-      waitClaim: { requesterSessionKey: REQUESTER, awaitedRunIds: ["run-b"], claimedAt: 5_000 },
+      waitClaim: {
+        requesterSessionKey: REQUESTER,
+        awaitedRunIds: ["run-b"],
+        claimedAt: 5_000,
+        requireVisibleReply: true,
+      },
       requesterSettleWake: {
         status: "pending",
         attemptCount: 0,
@@ -777,6 +788,7 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
         requesterSessionKey: REQUESTER,
         awaitedRunIds: ["run-a", "run-b"],
         claimedAt: 5_000,
+        requireVisibleReply: true,
       },
       requesterSettleWake: {
         status: "pending",
@@ -809,13 +821,17 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
     const child = makeSettledChild({
       runId: "run-b",
       delivery: { status: "delivered" },
-      waitClaim: { requesterSessionKey: REQUESTER, awaitedRunIds: ["run-b"], claimedAt: 5_000 },
+      waitClaim: {
+        requesterSessionKey: REQUESTER,
+        awaitedRunIds: ["run-b"],
+        claimedAt: 5_000,
+        requireVisibleReply: true,
+      },
       requesterSettleWake: {
         status: "pending",
         attemptCount: 0,
         batchRunIds: ["run-b"],
         requesterYieldBatch: true,
-        afterRequesterYield: true,
         rearmGeneration: 1,
       },
     });
@@ -838,6 +854,39 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
       { delivered: true, path: "direct" },
       true,
     );
+  });
+
+  it("obeys the pinned visible-reply contract over live yield-flag recomputation", async () => {
+    // requireVisibleReply is pinned on the claim at sessions_yield; batch
+    // yield flags present at wake time must not override a pinned false
+    // (the pre-pin code recomputed the demand from those flags per attempt).
+    const child = makeSettledChild({
+      runId: "run-b",
+      delivery: { status: "delivered" },
+      waitClaim: {
+        requesterSessionKey: REQUESTER,
+        awaitedRunIds: ["run-b"],
+        claimedAt: 5_000,
+        requireVisibleReply: false,
+      },
+      requesterSettleWake: {
+        status: "pending",
+        attemptCount: 0,
+        batchRunIds: ["run-b"],
+        requesterYieldBatch: true,
+        rearmGeneration: 1,
+      },
+    });
+    registryRuntimeMock.listSubagentRunsForRequester.mockReturnValue([child]);
+
+    const woke = await maybeWakeRequesterAfterAllChildrenSettled(
+      wakeParams({ settledEntry: child }),
+    );
+
+    expect(woke).toBe(true);
+    expect(deliverSpy).toHaveBeenCalledOnce();
+    expect(deliveredCallArg().requireVisibleReply).toBeUndefined();
+    expect(String(deliveredCallArg().triggerMessage)).toContain("NO_REPLY");
   });
 
   it("wakes for a single required completion whose announce never delivered", async () => {
@@ -1083,7 +1132,12 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
     const child = makeSettledChild({
       runId: "run-b",
       delivery: { status: "delivered" },
-      waitClaim: { requesterSessionKey: REQUESTER, awaitedRunIds: ["run-b"], claimedAt: 5_000 },
+      waitClaim: {
+        requesterSessionKey: REQUESTER,
+        awaitedRunIds: ["run-b"],
+        claimedAt: 5_000,
+        requireVisibleReply: true,
+      },
       requesterSettleWake: {
         status: "pending",
         attemptCount: 0,

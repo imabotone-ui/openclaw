@@ -34,6 +34,7 @@ describe("recordSubagentWaitClaimInRuns", () => {
     const persistOrThrow = vi.fn();
 
     const result = recordSubagentWaitClaimInRuns({
+      requireVisibleReply: true,
       requesterSessionKey: "agent:main:main",
       requesterTurnRunId: "run-requester",
       now: NOW,
@@ -47,8 +48,23 @@ describe("recordSubagentWaitClaimInRuns", () => {
       requesterTurnRunId: "run-requester",
       awaitedRunIds: ["run-a"],
       claimedAt: NOW,
+      requireVisibleReply: true,
     });
     expect(persistOrThrow).toHaveBeenCalledExactlyOnceWith("run-a");
+  });
+
+  it("pins a false visible-reply contract verbatim (nested requester)", () => {
+    const entry = makeRun("run-a", "agent:main:subagent:middle");
+    const result = recordSubagentWaitClaimInRuns({
+      requireVisibleReply: false,
+      requesterSessionKey: "agent:main:subagent:middle",
+      now: NOW,
+      runs: runsMap(entry),
+      persistOrThrow: vi.fn(),
+    });
+
+    expect(result.awaitedRunIds).toEqual(["run-a"]);
+    expect(entry.waitClaim?.requireVisibleReply).toBe(false);
   });
 
   it("stamps the same sorted awaited set on every child, skipping settled or foreign rows", () => {
@@ -66,6 +82,7 @@ describe("recordSubagentWaitClaimInRuns", () => {
     const persistOrThrow = vi.fn();
 
     const result = recordSubagentWaitClaimInRuns({
+      requireVisibleReply: true,
       requesterSessionKey: requester,
       now: NOW,
       runs: runsMap(running, terminalUndelivered, delivered, otherRequester),
@@ -88,6 +105,7 @@ describe("recordSubagentWaitClaimInRuns", () => {
     const persistOrThrow = vi.fn();
 
     const result = recordSubagentWaitClaimInRuns({
+      requireVisibleReply: true,
       requesterSessionKey: nestedRequester,
       now: NOW,
       runs: runsMap(entry),
@@ -105,6 +123,7 @@ describe("recordSubagentWaitClaimInRuns", () => {
     const persistOrThrow = vi.fn();
 
     const result = recordSubagentWaitClaimInRuns({
+      requireVisibleReply: true,
       requesterSessionKey: cronRequester,
       now: NOW,
       runs: runsMap(entry),
@@ -134,6 +153,7 @@ describe("recordSubagentWaitClaimInRuns", () => {
     const persistOrThrow = vi.fn();
 
     const result = recordSubagentWaitClaimInRuns({
+      requireVisibleReply: true,
       requesterSessionKey: requester,
       requesterTurnRunId: "run-requester",
       now: NOW,
@@ -158,6 +178,7 @@ describe("recordSubagentWaitClaimInRuns", () => {
     const runs = runsMap(delivered);
 
     const result = recordSubagentWaitClaimInRuns({
+      requireVisibleReply: true,
       requesterSessionKey: requester,
       requesterTurnRunId: "run-requester",
       now: NOW,
@@ -180,6 +201,7 @@ describe("recordSubagentWaitClaimInRuns", () => {
     const persistOrThrow = vi.fn();
 
     const result = recordSubagentWaitClaimInRuns({
+      requireVisibleReply: true,
       requesterSessionKey: requester,
       now: NOW,
       runs: runsMap(collector, suppressed, cleaned),
@@ -198,6 +220,7 @@ describe("recordSubagentWaitClaimInRuns", () => {
 
     expect(() =>
       recordSubagentWaitClaimInRuns({
+        requireVisibleReply: true,
         requesterSessionKey: "agent:main:main",
         now: NOW,
         runs: runsMap(entry),
@@ -212,6 +235,7 @@ describe("resolveSubagentWaitClaim", () => {
   function claimedRuns(requester: string, ...entries: SubagentRunRecord[]) {
     const runs = runsMap(...entries);
     recordSubagentWaitClaimInRuns({
+      requireVisibleReply: true,
       requesterSessionKey: requester,
       now: NOW,
       runs,
