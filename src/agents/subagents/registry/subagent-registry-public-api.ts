@@ -9,10 +9,16 @@ import {
   countActiveRunsForSessionFromRuns,
   getLatestSubagentRunByChildSessionKeyFromRuns,
 } from "./subagent-registry-queries.js";
-import { markRequesterTurnYieldedInRuns } from "./subagent-registry-requester-yield.js";
+import {
+  applyRequesterTurnYieldedMutation,
+  rollbackRequesterTurnYieldedMutation,
+} from "./subagent-registry-requester-yield.js";
 import { getSubagentRunsSnapshotForRead } from "./subagent-registry-state.js";
 import type { SubagentRunRecord, SwarmStructuredOutputState } from "./subagent-registry.types.js";
-import { recordSubagentWaitClaimInRuns } from "./subagent-wait-claim.js";
+import {
+  applySubagentWaitClaimMutation,
+  rollbackSubagentWaitClaimMutation,
+} from "./subagent-wait-claim.js";
 
 export function createSubagentRegistryPublicApi(config: {
   runs: Map<string, SubagentRunRecord>;
@@ -187,19 +193,37 @@ export function createSubagentRegistryPublicApi(config: {
     requesterTurnRunId: string;
   }): number {
     restoreOnce();
-    const marked = markRequesterTurnYieldedInRuns({
+    // Both mutations below must land in a single persist call. Persisting the
+    // yield marker and the wait-claim stamp separately would let a crash or a
+    // throw between the two writes leave a yield-marked row with no claim —
+    // harmless while nothing reads the ledger, but indistinguishable from
+    // "never yielded" once a resolver trusts it (see BRIEF-wait-claim-ledger.md).
+    const yieldMutation = applyRequesterTurnYieldedMutation({
       ...params,
       runs,
-      persistOrThrow,
     });
-    // Wait-claim ledger (step 1): durably record what this yield awaits before
-    // the turn ends. Additive alongside yield marking; no wake path reads it yet.
-    recordSubagentWaitClaimInRuns({
+    const claimMutation = applySubagentWaitClaimMutation({
       ...params,
       runs,
-      persistOrThrow,
     });
-    return marked;
+    if (!yieldMutation.mutated && !claimMutation.mutated) {
+      return yieldMutation.markedCount;
+    }
+    const runIdsToPersist = new Set<string>();
+    for (const entry of yieldMutation.entries) {
+      runIdsToPersist.add(entry.runId);
+    }
+    for (const entry of claimMutation.entries) {
+      runIdsToPersist.add(entry.runId);
+    }
+    try {
+      persistOrThrow(...runIdsToPersist);
+    } catch (error) {
+      rollbackRequesterTurnYieldedMutation(yieldMutation.entries, yieldMutation.previous);
+      rollbackSubagentWaitClaimMutation(claimMutation.entries, claimMutation.previous);
+      throw error;
+    }
+    return yieldMutation.markedCount;
   }
 
   return {

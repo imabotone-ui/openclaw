@@ -2,18 +2,30 @@
 import type { AcceptedSessionSpawn } from "../../accepted-session-spawn.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
 
-/** Persists explicit yield intent before the requester run is aborted. */
-export function markRequesterTurnYieldedInRuns(params: {
+export type RequesterTurnYieldedMutation = {
+  entries: SubagentRunRecord[];
+  previous: (true | undefined)[];
+  markedCount: number;
+  mutated: boolean;
+};
+
+/**
+ * Mutates in-memory rows to record yield intent, without persisting. Exposed
+ * so callers that must persist this alongside another mutation (e.g. the
+ * wait-claim ledger stamp) can do so in one atomic write instead of two
+ * separate ones — a partial write between them would be indistinguishable
+ * from "never yielded" once a resolver trusts the ledger.
+ */
+export function applyRequesterTurnYieldedMutation(params: {
   requesterSessionKey: string;
   requesterAgentId?: string;
   requesterTurnRunId: string;
   runs: Map<string, SubagentRunRecord>;
-  persistOrThrow(...runIds: string[]): void;
-}): number {
+}): RequesterTurnYieldedMutation {
   const requesterSessionKey = params.requesterSessionKey.trim();
   const requesterTurnRunId = params.requesterTurnRunId.trim();
   if (!requesterSessionKey || !requesterTurnRunId) {
-    return 0;
+    return { entries: [], previous: [], markedCount: 0, mutated: false };
   }
   const entries = [...params.runs.values()].filter(
     (entry) =>
@@ -23,21 +35,48 @@ export function markRequesterTurnYieldedInRuns(params: {
       entry.expectsCompletionMessage === true,
   );
   if (entries.every((entry) => entry.requesterTurnYielded === true)) {
-    return entries.length;
+    return {
+      entries,
+      previous: entries.map((entry) => entry.requesterTurnYielded),
+      markedCount: entries.length,
+      mutated: false,
+    };
   }
   const previous = entries.map((entry) => entry.requesterTurnYielded);
   for (const entry of entries) {
     entry.requesterTurnYielded = true;
   }
+  return { entries, previous, markedCount: entries.length, mutated: true };
+}
+
+/** Reverts a mutation produced by {@link applyRequesterTurnYieldedMutation}. */
+export function rollbackRequesterTurnYieldedMutation(
+  entries: SubagentRunRecord[],
+  previous: (true | undefined)[],
+): void {
+  entries.forEach((entry, index) => {
+    entry.requesterTurnYielded = previous[index];
+  });
+}
+
+/** Persists explicit yield intent before the requester run is aborted. */
+export function markRequesterTurnYieldedInRuns(params: {
+  requesterSessionKey: string;
+  requesterTurnRunId: string;
+  runs: Map<string, SubagentRunRecord>;
+  persistOrThrow(...runIds: string[]): void;
+}): number {
+  const mutation = applyRequesterTurnYieldedMutation(params);
+  if (!mutation.mutated) {
+    return mutation.markedCount;
+  }
   try {
-    params.persistOrThrow(...entries.map((entry) => entry.runId));
+    params.persistOrThrow(...mutation.entries.map((entry) => entry.runId));
   } catch (error) {
-    entries.forEach((entry, index) => {
-      entry.requesterTurnYielded = previous[index];
-    });
+    rollbackRequesterTurnYieldedMutation(mutation.entries, mutation.previous);
     throw error;
   }
-  return entries.length;
+  return mutation.markedCount;
 }
 
 export function settleRequesterTurnAfterSessionSpawns(params: {
