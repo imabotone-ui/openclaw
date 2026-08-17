@@ -131,10 +131,13 @@ export async function resolveActiveWakeWithRetries(
       currentOptions.sourceReplyDeliveryMode !== undefined
     ) {
       // Active requester runs own their final delivery mode (fixed at run
-      // admission). This is NOT the per-retry recompute drift the pinned mode
-      // eliminates: even a correctly pinned completion mode can disagree with
-      // a parent run admitted under different policy, and that run's own mode
-      // must win or the already-running parent becomes unreachable.
+      // admission; rejection produced by resolveReplyBackendQueueMessageMismatch
+      // against the active backend handle). This is NOT the per-retry recompute
+      // drift the pinned mode eliminates: even a correctly pinned completion
+      // mode can disagree with a parent run admitted under different policy,
+      // and that run's own mode must win or the already-running parent becomes
+      // unreachable. Only sendSubagentAnnounceDirectly sets this option;
+      // maybeSteerSubagentAnnounce never does, so the guard is inert there.
       const activeRunOptions = { ...currentOptions };
       delete activeRunOptions.sourceReplyDeliveryMode;
       currentOptions = activeRunOptions;
