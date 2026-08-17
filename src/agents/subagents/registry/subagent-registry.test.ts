@@ -3476,6 +3476,12 @@ describe("subagent registry seam flow", () => {
         rearmGeneration: 1,
         batchRunIds: [SIBLING_RUN_ID, PAUSED_RUN_ID].toSorted(),
       };
+      paused.waitClaim = {
+        requesterSessionKey: "agent:main:main",
+        awaitedRunIds: [SIBLING_RUN_ID, PAUSED_RUN_ID].toSorted(),
+        claimedAt: 222,
+        requireVisibleReply: true,
+      };
       expect(mocks.runSubagentAnnounceFlow).not.toHaveBeenCalled();
       return paused;
     };
@@ -3516,6 +3522,11 @@ describe("subagent registry seam flow", () => {
         requesterYieldBatch: true,
         rearmGeneration: 1,
       });
+      // The wait-claim addresses awaited work by runId too; leaving the retired
+      // id would make the claim resolve satisfied while this successor runs.
+      expect(adopted.waitClaim?.awaitedRunIds).toEqual(
+        [SIBLING_RUN_ID, FOLLOW_UP_RUN_ID].toSorted(),
+      );
 
       await waitForFast(() => {
         expect(

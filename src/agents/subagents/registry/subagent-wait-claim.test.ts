@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
-import { recordSubagentWaitClaimInRuns, resolveSubagentWaitClaim } from "./subagent-wait-claim.js";
+import {
+  recordSubagentWaitClaimInRuns,
+  remapSubagentWaitClaimRunId,
+  resolveSubagentWaitClaim,
+  rollbackSubagentWaitClaimRemap,
+} from "./subagent-wait-claim.js";
 
 const NOW = 5_000;
 
@@ -362,5 +367,94 @@ describe("resolveSubagentWaitClaim", () => {
         "satisfied",
       );
     }
+  });
+});
+
+describe("remapSubagentWaitClaimRunId", () => {
+  function claimedRuns(requester: string, ...entries: SubagentRunRecord[]) {
+    const runs = runsMap(...entries);
+    recordSubagentWaitClaimInRuns({
+      requireVisibleReply: true,
+      requesterSessionKey: requester,
+      now: NOW,
+      runs,
+      persistOrThrow: vi.fn(),
+    });
+    return runs;
+  }
+
+  it("remaps a retired run id on the successor and every sibling claim copy", () => {
+    // Run-id adoption deletes the previous row while the task continues; an
+    // unmapped claim would resolve satisfied while the successor still runs.
+    const requester = "agent:main:main";
+    const adopted = makeRun("run-a", requester);
+    const sibling = makeRun("run-b", requester);
+    const runs = claimedRuns(requester, adopted, sibling);
+    runs.delete("run-a");
+    const successor = makeRun("run-a2", requester, { waitClaim: adopted.waitClaim });
+    runs.set("run-a2", successor);
+
+    expect(resolveSubagentWaitClaim({ requesterSessionKey: requester, runs }).status).toBe(
+      "pending",
+    );
+    // Pre-remap the pending hold survives only via run-b; retire it to expose
+    // the stale membership: the live successor is invisible to the claim.
+    sibling.execution = { status: "terminal", endedAt: 2_000 };
+    sibling.delivery = { status: "delivered" };
+    expect(resolveSubagentWaitClaim({ requesterSessionKey: requester, runs }).status).toBe(
+      "satisfied",
+    );
+
+    const remap = remapSubagentWaitClaimRunId({
+      previousRunId: "run-a",
+      nextRunId: "run-a2",
+      runs,
+    });
+
+    expect(remap.entries.map((entry) => entry.runId).toSorted()).toEqual(["run-a2", "run-b"]);
+    expect(successor.waitClaim?.awaitedRunIds).toEqual(["run-a2", "run-b"]);
+    expect(sibling.waitClaim?.awaitedRunIds).toEqual(["run-a2", "run-b"]);
+    const resolution = resolveSubagentWaitClaim({ requesterSessionKey: requester, runs });
+    expect(resolution.status).toBe("pending");
+    expect(resolution.status === "pending" && resolution.unsettledRunIds).toEqual(["run-a2"]);
+  });
+
+  it("rolls back to the exact prior claim objects and leaves unrelated claims alone", () => {
+    const requester = "agent:main:main";
+    const child = makeRun("run-a", requester);
+    const other = makeRun("run-x", "agent:other:main");
+    const runs = claimedRuns(requester, child);
+    recordSubagentWaitClaimInRuns({
+      requireVisibleReply: true,
+      requesterSessionKey: "agent:other:main",
+      now: NOW,
+      runs: runsMap(other),
+      persistOrThrow: vi.fn(),
+    });
+    runs.set("run-x", other);
+    const previousClaim = child.waitClaim;
+    const otherClaim = other.waitClaim;
+
+    const remap = remapSubagentWaitClaimRunId({
+      previousRunId: "run-a",
+      nextRunId: "run-a2",
+      runs,
+    });
+    expect(other.waitClaim).toBe(otherClaim);
+    expect(child.waitClaim?.awaitedRunIds).toEqual(["run-a2"]);
+
+    rollbackSubagentWaitClaimRemap(remap);
+    expect(child.waitClaim).toBe(previousClaim);
+    expect(child.waitClaim?.awaitedRunIds).toEqual(["run-a"]);
+  });
+
+  it("is a no-op when the run id is unchanged", () => {
+    const requester = "agent:main:main";
+    const child = makeRun("run-a", requester);
+    const runs = claimedRuns(requester, child);
+    const claim = child.waitClaim;
+    const remap = remapSubagentWaitClaimRunId({ previousRunId: "run-a", nextRunId: "run-a", runs });
+    expect(remap.entries).toEqual([]);
+    expect(child.waitClaim).toBe(claim);
   });
 });

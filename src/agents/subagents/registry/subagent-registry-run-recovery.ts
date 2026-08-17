@@ -31,6 +31,10 @@ import {
   getSubagentSessionRuntimeMs,
   getSubagentSessionStartedAt,
 } from "./subagent-session-metrics.js";
+import {
+  remapSubagentWaitClaimRunId,
+  rollbackSubagentWaitClaimRemap,
+} from "./subagent-wait-claim.js";
 
 const log = createSubsystemLogger("agents/subagent-registry");
 
@@ -286,11 +290,21 @@ export class SubagentRecoveryManager extends SubagentWaitManager {
       this.options.runs.delete(previousRunId);
     }
     this.options.runs.set(nextRunId, next);
-    const killReconciliationSnapshots = this.markOlderKillReconciliationsSuperseded(next);
-    const changedRunIds = [
+    // Claims address awaited work by runId like the frozen batch above does;
+    // an unmapped claim would read satisfied while this successor still runs.
+    const waitClaimRemap = remapSubagentWaitClaimRunId({
       previousRunId,
       nextRunId,
-      ...[...killReconciliationSnapshots.keys()].map((entry) => entry.runId),
+      runs: this.options.runs,
+    });
+    const killReconciliationSnapshots = this.markOlderKillReconciliationsSuperseded(next);
+    const changedRunIds = [
+      ...new Set([
+        previousRunId,
+        nextRunId,
+        ...waitClaimRemap.entries.map((entry) => entry.runId),
+        ...[...killReconciliationSnapshots.keys()].map((entry) => entry.runId),
+      ]),
     ];
     try {
       this.options.persistOrThrow(...changedRunIds);
@@ -300,6 +314,7 @@ export class SubagentRecoveryManager extends SubagentWaitManager {
         replaceParams.lifecycleGeneration !== undefined
       ) {
         this.restoreKillReconciliationSnapshots(killReconciliationSnapshots);
+        rollbackSubagentWaitClaimRemap(waitClaimRemap);
         this.options.runs.delete(nextRunId);
         this.options.runs.set(previousRunId, source);
         log.warn("failed to persist replacement subagent recovery run; restored source lease", {

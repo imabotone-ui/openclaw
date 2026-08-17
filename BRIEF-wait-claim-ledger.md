@@ -860,3 +860,93 @@ false verbatim, e2e claim-carries-pin assertion.
 `pnpm tsgo` and `pnpm check:test-types` clean. Item B production delta is
 roughly net-neutral (comments account for the growth; two flag paths
 deleted).
+
+### 2026-08-17 — rearmGeneration consolidation investigation + gap audit
+
+#### Objective 1: rearmGeneration / batch-freeze vs claim — consolidation investigation
+
+Read in full: `subagent-registry.types.ts`, `subagent-wait-claim.ts`,
+`subagent-registry-requester-yield.ts`,
+`subagent-announce.requester-settle-wake.ts`,
+`subagent-registry-lifecycle-wake.ts`, plus every other `rearmGeneration`/
+`batchRunIds`/`requesterYieldBatch`/`retireAfterSettle` touchpoint
+(`subagent-registry-run-manager.ts` adoption path,
+`subagent-registry-lifecycle-announce-cleanup.ts`, `subagent-registry.ts`
+resume gating, `subagent-registry-lifecycle-context.ts` timer records, sqlite
+column mapping).
+
+**Verdict on merging the machineries: the prior entries' reasoning is
+correct — no state consolidation is possible without conflating the two
+concerns. Specific evidence:**
+
+- `batchRunIds` is provably NOT derivable from `awaitedRunIds` (and vice
+  versa). Different write instants: the claim is stamped at the
+  `sessions_yield` tool call (`markRequesterTurnYielded`), the batch freeze at
+  requester-turn settle (`settleRequesterTurnAfterSessionSpawns`) — a yield
+  whose spawn set fails settle validation (spawn/childSessionKey mismatch,
+  early `return false`) leaves a claim with no frozen batch. Different
+  membership: the claim is turn-scoped-plus-earlier-awaited (includes
+  already-delivered same-turn children since `dc7e8daa01c`, and still-awaited
+  children from EARLIER turns so a newest-claim-wins resolver cannot orphan
+  them); the batch is single-turn, spawn-validated, and excludes nothing for
+  delivery state. Different existence: never-yielded waves freeze
+  `batchRunIds` via `deferRequesterSettleWakeBatch` with no claim at all
+  (`buildConnectedSettledWave` path). Membership can coincide, but never
+  provably-always.
+- `rearmGeneration` cannot be unified with claim identity (`claimedAt`).
+  The generation is a monotonic fence compared by in-flight wake promises
+  (`transitionRequesterSettleWakeBatch` / `completeRequesterSettleWakeBatch`
+  filter rows by exact generation match) and by retry timers
+  (`retainScheduledRequesterSettleWakeTimer` clears older-generation timers).
+  Claims are consumed on delivered wakes while wake state persists through
+  failed attempts and re-arms; `claimedAt` is wall-clock, not monotonic per
+  admission. Replacing one with the other loses either the fencing property
+  or the wait semantics — exactly the conflation this initiative removed.
+- `requesterYieldBatch` overlaps "a claim existed at settle time" but has a
+  different lifecycle: its two readers
+  (`isCompletionOwnedByRequesterYield` in lifecycle-announce-cleanup, the
+  `yieldedWakeWaitingForDelivery` resume gate in `subagent-registry.ts`) need
+  the answer after a delivered wake may have CONSUMED the claim, so deriving
+  it from claim presence would flip those reads post-delivery. Kept.
+- `retireAfterSettle` is cleanup deferral, orthogonal to both. Kept.
+
+**One genuine redundant-write-path gap found and fixed: run-id adoption
+remapped `batchRunIds` but not `waitClaim.awaitedRunIds`.**
+`replaceSubagentRunAfterSteer` (`subagent-registry-run-manager.ts`) retires
+`previousRunId` from the runs map while the task continues under `nextRunId`,
+and explicitly remaps the frozen batch membership (with a comment explaining
+why an unmapped list would break the wave). The claim, carried onto the
+successor via the `...source` spread — and duplicated on every sibling row —
+still named the retired id. `resolveSubagentWaitClaim` treats a missing row
+as settled ("the registry only deletes rows after obligations resolve" — an
+assumption adoption violates), so after adopting a claimed child the claim
+resolved `satisfied` while the successor was still running. Today this is
+MASKED by the layered gates (frozen-batch liveness check and
+`hasDescendantRunAwaitingSettle` both see the live successor), i.e. the
+authoritative recorded fact was wrong and only multi-signal inference saved
+the outcome — the precise anti-pattern this ledger exists to remove, and a
+latent false-satisfied wake if those gates ever narrow. Reachable from all
+three replacement callers: yield-follow-up adoption
+(`adoptPausedSubagentRunForFollowUp`), descendant-wake steer, and restart
+recovery.
+
+Fix (additive, producer-owned, mirrors the batch remap in the same write):
+`remapSubagentWaitClaimRunId` + `rollbackSubagentWaitClaimRemap` in
+`subagent-wait-claim.ts` remap the retired id on every row whose claim names
+it (fresh claim object + array per row — the writer shares one
+`awaitedRunIds` array across siblings, so in-place mutation would corrupt
+rollback snapshots); `replaceSubagentRunAfterSteer` calls it after installing
+the successor, persists the touched sibling rows in the same
+`persistOrThrow`, and rolls the remap back on the persist-failure branch.
+Deliberately NOT changed: the concepts stay separate; no claim/batch field
+was merged.
+
+Tests: three new unit tests (`subagent-wait-claim.test.ts`) — sibling+
+successor remap with a resolver before/after proof of the stale-satisfied
+state, exact-object rollback leaving foreign claims untouched, same-id no-op —
+plus a claim assertion added to the existing follow-up-adoption integration
+test (`subagent-registry.test.ts`), verified failing pre-fix (stashed the
+run-manager change: 1 failed / 150 passed) and green post-fix.
+
+Validation: full `src/agents/subagents/` suite green (4604 tests, up from
+4592), `pnpm tsgo` and `pnpm check:test-types` clean.
