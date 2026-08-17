@@ -22,6 +22,53 @@ function isAwaitedByRequester(entry: SubagentRunRecord): boolean {
   return entry.execution.status !== "terminal" || entry.delivery?.status !== "delivered";
 }
 
+export type SubagentWaitClaimResolution =
+  | { status: "no_claim" }
+  | { status: "pending"; claim: SubagentWaitClaim; unsettledRunIds: string[] }
+  | { status: "satisfied"; claim: SubagentWaitClaim };
+
+/**
+ * Claim resolver (step 2 of the wait-claim ledger): answers "is this
+ * requester's latest wait-claim satisfied?" purely from the runs map.
+ * Deliberately no depth/cron exclusions — nested-subagent and cron-session
+ * requesters resolve identically; that uniformity is the ledger's purpose.
+ * Currently consumed only by the shadow-mode observer; no wake path acts on it.
+ */
+export function resolveSubagentWaitClaim(params: {
+  requesterSessionKey: string;
+  runs: ReadonlyMap<string, SubagentRunRecord>;
+}): SubagentWaitClaimResolution {
+  const requesterSessionKey = params.requesterSessionKey.trim();
+  if (!requesterSessionKey) {
+    return { status: "no_claim" };
+  }
+  // Every child stamped by one yield carries an identical claim, so the
+  // newest claimedAt seen on any row is the requester's latest claim.
+  let claim: SubagentWaitClaim | undefined;
+  for (const entry of params.runs.values()) {
+    const candidate = entry.waitClaim;
+    if (candidate?.requesterSessionKey !== requesterSessionKey) {
+      continue;
+    }
+    if (!claim || candidate.claimedAt > claim.claimedAt) {
+      claim = candidate;
+    }
+  }
+  if (!claim) {
+    return { status: "no_claim" };
+  }
+  // A missing row is settled: the registry only deletes rows after their
+  // completion obligations resolve (retirement/cleanup), never mid-flight.
+  const unsettledRunIds = claim.awaitedRunIds.filter((runId) => {
+    const entry = params.runs.get(runId);
+    return entry !== undefined && isAwaitedByRequester(entry);
+  });
+  if (unsettledRunIds.length === 0) {
+    return { status: "satisfied", claim };
+  }
+  return { status: "pending", claim, unsettledRunIds };
+}
+
 export type SubagentWaitClaimMutation = {
   entries: SubagentRunRecord[];
   previous: (SubagentWaitClaim | undefined)[];

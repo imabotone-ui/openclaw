@@ -33,6 +33,7 @@ import {
 import { subagentRuns } from "./subagent-registry-memory.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
 import { hasSubagentRunEnded } from "./subagent-run-liveness.js";
+import { logWaitClaimResolverShadow } from "./subagent-wait-claim-shadow.js";
 
 type RequesterSettleWakeBatchState =
   import("../announce/subagent-announce.requester-settle-wake.js").RequesterSettleWakeBatchState;
@@ -374,26 +375,46 @@ export function scheduleRequesterSettleWake(
   // Wake turns outlive their spawning attempt; clear its owner before both
   // dispatch and chained re-arms so transcript writes acquire a fresh lock.
   runWithoutOwnedSessionTranscriptWrites(() => {
-    void context
-      .runRequesterSettleWake(entry, async () => {
-        // Admission may wait behind restored work. Revalidate the durable block
-        // after that wait, not only when the wake was initially scheduled.
-        if (
-          isCompletedRequesterDeliveryBlocked(entry) &&
-          entry.requesterSettleWake?.requesterYieldBatch !== true
-        ) {
-          return false;
-        }
-        return params.maybeWakeRequesterAfterAllChildrenSettled({
+    const wakePromise = context.runRequesterSettleWake(entry, async () => {
+      // Admission may wait behind restored work. Revalidate the durable block
+      // after that wait, not only when the wake was initially scheduled.
+      if (
+        isCompletedRequesterDeliveryBlocked(entry) &&
+        entry.requesterSettleWake?.requesterYieldBatch !== true
+      ) {
+        return false;
+      }
+      return params.maybeWakeRequesterAfterAllChildrenSettled({
+        requesterSessionKey,
+        requesterOrigin: entry.requesterOrigin,
+        settledEntry: entry,
+        transitionBatch: (batch, state) =>
+          transitionRequesterSettleWakeBatch(context, batch, state),
+        completeBatch: (batch, rearmGeneration, outcome) =>
+          completeRequesterSettleWakeBatch(context, batch, rearmGeneration, outcome),
+      });
+    });
+    // Wait-claim ledger step 2: observe-only resolver comparison, attached as
+    // an independent branch off wakePromise (not chained ahead of .catch()/
+    // .finally() below). Chaining it inline would add a microtask tick before
+    // the cleanup .finally() runs, which is enough to make a same-tick retry
+    // sweep see the run as still scheduled and skip re-invoking the wake —
+    // shadow logging must never shift the timing of real wake/retry logic.
+    void wakePromise.then(
+      (pushWake) => {
+        logWaitClaimResolverShadow({
           requesterSessionKey,
-          requesterOrigin: entry.requesterOrigin,
-          settledEntry: entry,
-          transitionBatch: (batch, state) =>
-            transitionRequesterSettleWakeBatch(context, batch, state),
-          completeBatch: (batch, rearmGeneration, outcome) =>
-            completeRequesterSettleWakeBatch(context, batch, rearmGeneration, outcome),
+          settledRunId: runId,
+          pushWake: pushWake as boolean,
+          runs: params.runs,
         });
-      })
+      },
+      () => {
+        // Rejection is handled by the .catch() below; shadow mode has
+        // nothing to observe on failure and must not double-handle it.
+      },
+    );
+    void wakePromise
       .catch((error: unknown) => {
         // Restart admission defers the durable wake to startup; it is not a delivery failure.
         if (isGatewayRestartDrainError(error)) {

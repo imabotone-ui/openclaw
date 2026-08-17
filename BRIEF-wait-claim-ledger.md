@@ -193,3 +193,130 @@ Next session (step 2): add the claim resolver as one function answering "is
 this claim satisfied", called at child completion commit, heartbeat, and
 next-turn admission, running in shadow/log-only mode and comparing its answer
 against the existing settle-wake outcomes. No cutover yet.
+
+### 2026-08-17 — Step 2 landed on this branch (resolver + shadow mode)
+
+What the resolver does:
+
+- `resolveSubagentWaitClaim` in
+  `src/agents/subagents/registry/subagent-wait-claim.ts`: pure function over
+  the runs map. Finds the requester's latest claim (newest `claimedAt` on any
+  row — every child stamped by one yield carries an identical claim), then
+  checks each `awaitedRunIds` member. Settled = row deleted (registry only
+  retires rows after obligations resolve) or no longer awaited per the same
+  `isAwaitedByRequester` predicate the writer uses (terminal + delivered,
+  suppressed, collector, cleaned up). Returns a closed
+  `no_claim | pending (with unsettledRunIds) | satisfied` union. Deliberately
+  no depth>=1 or cron-key exclusions — nested and cron requesters resolve
+  identically.
+
+How shadow mode works and how to read it:
+
+- Wired at the single push-path point: in
+  `subagent-registry-lifecycle-wake.ts`, `scheduleRequesterSettleWake`'s
+  promise chain gained a `.then((pushWake) => logWaitClaimResolverShadow(...))`
+  before the existing `.catch`/`.finally`. `pushWake` is
+  `maybeWakeRequesterAfterAllChildrenSettled`'s boolean return (true only when
+  a settle-wake message was actually delivered).
+- `logWaitClaimResolverShadow`
+  (`subagent-wait-claim-shadow.ts`) emits one `logDebug` line per comparison:
+  `[wait-claim-resolver-shadow] agree|disagree push=<bool>
+  resolver=<pending|satisfied> requester=<masked> settledRun=<masked>
+  [pending=<masked ids>]`. `no_claim` (requester never yielded) logs nothing.
+  Identifiers are masked via `maskLifecycleIdentifier`. Observe-only by
+  contract: the whole body is wrapped in try/catch, returns void, and cannot
+  alter the wake decision. Grep `wait-claim-resolver-shadow` to find every
+  trace and the one wiring site for removal/promotion.
+- Reading guide — `disagree push=false resolver=satisfied` is NOT
+  automatically a missed wake. `pushWake=true` means "synthetic settle-wake
+  delivered", while `resolver=satisfied` means "nothing left awaited". They
+  legitimately differ when the per-child completion already reached the
+  requester (single-child fast path: push declines the redundant wake) and
+  transiently during push retry backoff. The interesting rows are satisfied +
+  push=false where the requester had actually yielded
+  (`requesterYieldBatch`/`rearmGeneration` present) — those are the missed
+  wakes the ledger exists to fix.
+
+Known systematic disagreements found by code inspection (expected, valuable):
+
+1. Cron requesters: push path completes the batch at
+   `isCronSessionKey` early-return and never wakes; resolver says satisfied.
+   Every cron shadow line will read `disagree push=false resolver=satisfied`.
+   This is root cause #6 — by design the resolver disagrees here.
+2. Nested requesters (depth >= 1): same shape via the
+   `getSubagentDepthFromSessionStore(...) >= 1` completion branch. Root
+   cause #3.
+3. Descendant scope gap (matters for step 3 design): the push path defers a
+   drained batch while `hasDescendantRunAwaitingSettle` sees unsettled
+   grandchildren; the claim covers only the requester's direct awaited
+   children, so the resolver can say satisfied while push intentionally holds
+   the wake. Cutover must decide whether descendant-drain remains a
+   delivery-timing gate layered on claim satisfaction, or whether claims
+   should be resolved transitively down the requester chain. Do not cut over
+   settle-wake before answering this.
+4. Membership drift: a claim frozen at yield can include a child the
+   settle-wake batch machinery later excludes (rearm-generation mismatch,
+   retired rows), so `resolver=pending push=true` is theoretically possible;
+   no such line should appear in practice — treat any occurrence as a bug in
+   either the batch freeze or the claim writer.
+
+Validation: new resolver unit tests (satisfied / pending / partially settled /
+retired+suppressed rows / newest-claim selection / nested + cron uniformity)
+in `subagent-wait-claim.test.ts`; shadow tests (agree, disagree, pending
+masking, no_claim silence, never-throws on a poisoned runs map) in
+`subagent-wait-claim-shadow.test.ts`; full `src/agents/subagents/` suite green
+with no existing-test changes.
+
+Step 3 next: cut over one delivery path at a time, starting with the
+requester settle-wake batch. Concretely: (a) resolve the descendant-scope
+question above; (b) make the settle-wake completion path consult
+`resolveSubagentWaitClaim` as the wake gate for yielded requesters instead of
+the depth/cron early-returns, keeping the existing delivery/retry machinery;
+(c) add claim lifecycle (clear or tombstone the claim once its wake
+delivers) so satisfied claims don't re-trigger; (d) promote or remove the
+shadow log lines at that point.
+
+### 2026-08-17 — Step 2 follow-up: fixed a timing regression before merge
+
+The worker that landed the above left its own background full-suite test run
+running and never committed, pushed, or sent its completion notification
+(its process was killed mid-run). Picking that up directly rather than
+re-running the same task from scratch:
+
+Running the full `src/agents/subagents/` suite surfaced a real regression
+introduced by the shadow wiring: 4 test files failed, all the same assertion
+in `subagent-registry.test.ts` — a retry-after-worker-error test expected
+`maybeWakeRequesterAfterAllChildrenSettled` to be called twice across two
+sweeps and only saw one call.
+
+Root cause: the original wiring chained the shadow observer inline —
+`wakePromise.then((pushWake) => logWaitClaimResolverShadow(...)).catch(...).finally(...)`.
+Inserting a `.then()` ahead of `.catch()`/`.finally()` adds one extra
+microtask tick before that `.finally()` runs. That `.finally()` is what calls
+`context.unmarkRequesterSettleWakeRunScheduled(runId)` — the flag a same-tick
+retry sweep checks via `context.hasScheduledRequesterSettleWakeRun(runId)`
+before deciding whether to re-invoke the wake. With the shadow `.then()` in
+the chain, a same-tick second sweep can observe the run as still scheduled
+and skip re-invoking the wake — i.e. shadow-mode *observation* was changing
+real retry timing, exactly the failure class this whole ledger effort exists
+to eliminate. Ironic, and a useful proof that "observe-only" needs to be
+verified against the async chain shape, not just against direct return
+values.
+
+Fix: attach the shadow `.then()`/rejection-swallow as an independent branch
+off the same `wakePromise`, in parallel with (not chained ahead of) the
+existing `.catch()`/`.finally()` chain, so shadow logging can never delay the
+real cleanup/retry logic regardless of how many microtask ticks it takes.
+See `subagent-registry-lifecycle-wake.ts`.
+
+Validation after the fix: `subagent-registry.test.ts` alone (148 tests × 2
+projects = 296) all green; full `src/agents/subagents/` suite: 179 files,
+4496 tests, all green, zero existing-test changes.
+
+Lesson for step 3: any future wiring of the resolver into a real decision
+path must audit the exact promise-chain shape it's inserted into, not just
+its logical effect — an async instrumentation point that looks purely
+additive can still shift ordering-sensitive cleanup/retry behavior. Prefer
+attaching observers as parallel branches off the original promise rather
+than chaining them inline, as a default pattern for any future shadow/log
+instrumentation in this codebase.

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
-import { recordSubagentWaitClaimInRuns } from "./subagent-wait-claim.js";
+import { recordSubagentWaitClaimInRuns, resolveSubagentWaitClaim } from "./subagent-wait-claim.js";
 
 const NOW = 5_000;
 
@@ -149,5 +149,116 @@ describe("recordSubagentWaitClaimInRuns", () => {
       }),
     ).toThrow("disk full");
     expect(entry.waitClaim).toBeUndefined();
+  });
+});
+
+describe("resolveSubagentWaitClaim", () => {
+  function claimedRuns(requester: string, ...entries: SubagentRunRecord[]) {
+    const runs = runsMap(...entries);
+    recordSubagentWaitClaimInRuns({
+      requesterSessionKey: requester,
+      now: NOW,
+      runs,
+      persistOrThrow: vi.fn(),
+    });
+    return runs;
+  }
+
+  it("returns no_claim when the requester never yielded a claim", () => {
+    const runs = runsMap(makeRun("run-a", "agent:main:main"));
+    expect(resolveSubagentWaitClaim({ requesterSessionKey: "agent:main:main", runs })).toEqual({
+      status: "no_claim",
+    });
+    expect(resolveSubagentWaitClaim({ requesterSessionKey: " ", runs })).toEqual({
+      status: "no_claim",
+    });
+  });
+
+  it("reports pending with the unsettled subset while children are still running", () => {
+    const requester = "agent:main:main";
+    const running = makeRun("run-b", requester);
+    const delivered = makeRun("run-a", requester, {
+      execution: { status: "terminal", endedAt: 2_000 },
+      delivery: { status: "pending" },
+    });
+    const runs = claimedRuns(requester, running, delivered);
+
+    const resolution = resolveSubagentWaitClaim({ requesterSessionKey: requester, runs });
+    expect(resolution.status).toBe("pending");
+    if (resolution.status === "pending") {
+      expect(resolution.unsettledRunIds).toEqual(["run-a", "run-b"]);
+      expect(resolution.claim.awaitedRunIds).toEqual(["run-a", "run-b"]);
+    }
+  });
+
+  it("reports pending for a partially settled claim, then satisfied once all deliver", () => {
+    const requester = "agent:main:main";
+    const first = makeRun("run-a", requester);
+    const second = makeRun("run-b", requester);
+    const runs = claimedRuns(requester, first, second);
+
+    first.execution = { status: "terminal", endedAt: 2_000 };
+    first.delivery = { status: "delivered" };
+    const partial = resolveSubagentWaitClaim({ requesterSessionKey: requester, runs });
+    expect(partial).toMatchObject({ status: "pending", unsettledRunIds: ["run-b"] });
+
+    second.execution = { status: "terminal", endedAt: 3_000 };
+    second.delivery = { status: "delivered" };
+    expect(resolveSubagentWaitClaim({ requesterSessionKey: requester, runs }).status).toBe(
+      "satisfied",
+    );
+  });
+
+  it("treats retired (deleted) rows and suppressed rows as settled", () => {
+    const requester = "agent:main:main";
+    const retired = makeRun("run-a", requester);
+    const suppressed = makeRun("run-b", requester);
+    const runs = claimedRuns(requester, retired, suppressed);
+
+    runs.delete("run-a");
+    suppressed.suppressCompletionDelivery = true;
+    expect(resolveSubagentWaitClaim({ requesterSessionKey: requester, runs }).status).toBe(
+      "satisfied",
+    );
+  });
+
+  it("resolves a newer claim over a stale one from an earlier yield", () => {
+    const requester = "agent:main:main";
+    const stale = makeRun("run-old", requester, {
+      execution: { status: "terminal", endedAt: 2_000 },
+      delivery: { status: "delivered" },
+      waitClaim: {
+        requesterSessionKey: requester,
+        awaitedRunIds: ["run-old"],
+        claimedAt: NOW - 1_000,
+      },
+    });
+    const current = makeRun("run-new", requester, {
+      waitClaim: {
+        requesterSessionKey: requester,
+        awaitedRunIds: ["run-new"],
+        claimedAt: NOW,
+      },
+    });
+    const runs = runsMap(stale, current);
+
+    const resolution = resolveSubagentWaitClaim({ requesterSessionKey: requester, runs });
+    expect(resolution).toMatchObject({ status: "pending", unsettledRunIds: ["run-new"] });
+  });
+
+  it("resolves nested-subagent and cron-session requesters with no special casing", () => {
+    // The push path excludes depth>=1 and cron requesters; the resolver must not.
+    for (const requester of ["agent:main:subagent:parent-1", "agent:main:cron:nightly-audit"]) {
+      const child = makeRun("run-child", requester);
+      const runs = claimedRuns(requester, child);
+      expect(resolveSubagentWaitClaim({ requesterSessionKey: requester, runs }).status).toBe(
+        "pending",
+      );
+      child.execution = { status: "terminal", endedAt: 2_000 };
+      child.delivery = { status: "delivered" };
+      expect(resolveSubagentWaitClaim({ requesterSessionKey: requester, runs }).status).toBe(
+        "satisfied",
+      );
+    }
   });
 });
