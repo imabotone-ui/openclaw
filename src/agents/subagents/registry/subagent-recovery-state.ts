@@ -1,6 +1,14 @@
 import type { SessionEntry } from "../../../config/sessions.js";
 import { isAgentEventLifecycleGenerationCurrent } from "../../../infra/agent-events.js";
+import { isFastTestRuntimeEnv } from "../../../infra/env.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
+
+/**
+ * Delay before a recoverable completion-wait retry re-fires. Shared by the
+ * run-manager's in-memory timer and the sweeper's overdue-marker grace window:
+ * a pendingWaitRetryAt older than one full delay means the timer was lost.
+ */
+export const RECOVERABLE_WAIT_RETRY_DELAY_MS = isFastTestRuntimeEnv() ? 25 : 5_000;
 
 export function shouldSuppressSubagentRecoverySessionEffects(entry: SubagentRunRecord): boolean {
   if (entry.killIntent) {

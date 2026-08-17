@@ -6,7 +6,10 @@ import { runWithGatewayIndependentRootWorkAdmission } from "../../../process/gat
 import { emitSessionLifecycleEvent } from "../../../sessions/session-lifecycle-events.js";
 import { createLazyImportLoader } from "../../../shared/lazy-promise.js";
 import { SUBAGENT_ENDED_REASON_ERROR } from "./subagent-lifecycle-events.js";
-import { shouldSuppressSubagentRecoverySessionEffects } from "./subagent-recovery-state.js";
+import {
+  RECOVERABLE_WAIT_RETRY_DELAY_MS,
+  shouldSuppressSubagentRecoverySessionEffects,
+} from "./subagent-recovery-state.js";
 import type { createSubagentRegistryCompletionRuntime } from "./subagent-registry-completion-runtime.js";
 import { reconcileOrphanedRun, safeRemoveAttachmentsDir } from "./subagent-registry-helpers.js";
 import type {
@@ -107,6 +110,8 @@ export function createSubagentRegistrySweeper(params: {
     requesterSessionKey: string,
     groupId: string,
   ) => Iterable<[string, SubagentRunRecord]>;
+  /** Re-attaches a completion wait whose durable retry marker went overdue. */
+  resumeOverdueSubagentWaitRetry: (runId: string, entry: SubagentRunRecord) => void;
   warn: (message: string, meta?: Record<string, unknown>) => void;
 }) {
   const { runs, resumedRuns } = params;
@@ -361,6 +366,17 @@ export function createSubagentRegistrySweeper(params: {
             (!getAgentRunContext(runId) && typeof entry.execution.endedAt !== "number")) &&
           (await recovery.recover(runId, entry, now))
         ) {
+          continue;
+        }
+        if (
+          typeof entry.execution.endedAt !== "number" &&
+          typeof entry.pendingWaitRetryAt === "number" &&
+          now >= entry.pendingWaitRetryAt + RECOVERABLE_WAIT_RETRY_DELAY_MS
+        ) {
+          // A live timer clears its marker at fire time, so a marker overdue by
+          // a full retry delay means the in-memory timer was lost (restart or
+          // run-map reload). Re-attach the wait; it consumes the marker.
+          params.resumeOverdueSubagentWaitRetry(runId, entry);
           continue;
         }
         if (typeof entry.execution.endedAt !== "number") {

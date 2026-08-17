@@ -291,6 +291,12 @@ export type SubagentRunRecord = {
   requesterSettleWake?: RequesterSettleWakeState;
   /** Wait-claim ledger row shared by every child awaited by the same yield. */
   waitClaim?: SubagentWaitClaim;
+  /**
+   * Due time of an in-memory completion-wait retry timer. A restart or run-map
+   * reload loses the timer; the sweeper re-fires overdue markers so the retry
+   * cannot vanish silently. Cleared when a completion wait (re)starts.
+   */
+  pendingWaitRetryAt?: number;
   attachmentsDir?: string;
   attachmentsRootDir?: string;
   retainAttachmentsOnKeep?: boolean;

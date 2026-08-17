@@ -2106,6 +2106,37 @@ describe("subagent registry seam flow", () => {
     const run = findRequesterRun("run-interrupted-wait");
     expect(run?.execution.endedAt).toBeUndefined();
     expect(run?.execution.outcome).toBeUndefined();
+    // The scheduled retry is an in-memory timer; the durable marker is what
+    // lets the sweeper detect a retry lost to a restart (root cause #4).
+    await waitForFast(() =>
+      expect(findRequesterRun("run-interrupted-wait")?.pendingWaitRetryAt).toEqual(
+        expect.any(Number),
+      ),
+    );
+  });
+
+  it("clears the durable wait-retry marker once the retried wait resumes", async () => {
+    let waitCalls = 0;
+    mockGatewayMethods(mocks.callGateway, {
+      "agent.wait": () => {
+        waitCalls += 1;
+        if (waitCalls === 1) {
+          throw new Error("gateway closed (1006): transport close");
+        }
+        return { status: "ok", startedAt: 111, endedAt: 222 };
+      },
+    });
+
+    mod.registerSubagentRun({
+      runId: "run-retried-wait",
+      task: "complete after one transport close",
+    });
+
+    await waitForFast(() =>
+      expect(findRequesterRun("run-retried-wait")?.execution.endedAt).toBeDefined(),
+    );
+    expect(waitCalls).toBeGreaterThanOrEqual(2);
+    expect(findRequesterRun("run-retried-wait")?.pendingWaitRetryAt).toBeUndefined();
   });
 
   it("detaches subagent completion from a disposed requester transcript owner", async () => {

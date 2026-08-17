@@ -412,6 +412,11 @@ const subagentSweeper = createSubagentRegistrySweeper({
   retireSupersededRun: retireSupersededSubagentRun,
   getRunsForChildSession: getSubagentRunsForChildSession,
   getRunsForCollectorGroup: getSubagentRunsForCollectorGroup,
+  resumeOverdueSubagentWaitRetry: (runId, entry) => {
+    const cfg = subagentRegistryDeps.getRuntimeConfig();
+    const waitTimeoutMs = resolveSubagentWaitTimeoutMs(cfg, entry.runTimeoutSeconds);
+    void subagentRunManager.waitForSubagentCompletion(runId, waitTimeoutMs, entry, true);
+  },
   warn: (message, meta) => log.warn(message, meta),
 });
 
