@@ -950,3 +950,70 @@ run-manager change: 1 failed / 150 passed) and green post-fix.
 
 Validation: full `src/agents/subagents/` suite green (4604 tests, up from
 4592), `pnpm tsgo` and `pnpm check:test-types` clean.
+
+#### Objective 2: gap audit
+
+The worker running this objective was killed mid-run after its broadened
+test suite finished but before it wrote up findings. Picking up directly
+rather than re-running from scratch, since the investigation groundwork and
+validation were already in place.
+
+1. **Stale references to renamed/removed symbols (full-repo grep).** Two
+   remaining hits for `isInternalAnnounceRequesterSession` /
+   `afterRequesterYield` outside `src/agents/subagents/`: both under
+   `packages/plugin-sdk/dist/` (compiled `.d.ts` build output). Confirmed via
+   `git check-ignore` — gitignored, stale build artifacts that regenerate on
+   next build, not live source. No fix needed. One remaining source hit for
+   `requesterYieldedAfterDelivery` is a test comment
+   (`subagent-announce.requester-settle-wake.test.ts:843`) explicitly
+   explaining why the retired heuristic no longer applies — intentional
+   documentation, not a leftover reference. **False alarm, ruled out.**
+
+2. **Stale docs describing old exclusion behavior.** Grepped
+   `docs/concepts/multi-agent.md`, `docs/concepts/agent-runtimes.md`,
+   `docs/concepts/compaction.md`, and the broader `docs/` tree for
+   depth/cron-exclusion language, settle-wake terminology, or the retired
+   heuristic names. Zero hits. The old behavior was apparently never
+   documented at the docs/ level (only in code comments, which this
+   initiative already updated in place). **No stale documentation found.**
+
+3. **Other wake/delivery paths with similar depth/cron exclusions,
+   untouched by this initiative.** Grepped every caller of
+   `getSubagentDepthFromSessionStore` and `isCronSessionKey` across
+   `src/agents/`. Found call sites in `subagent-capabilities.ts`,
+   `spawn-plan.ts`, `sessions-spawn-visible.ts`,
+   `main-session-recovery-state.ts`, `bash-tools.exec-approval-followup.ts`,
+   `workspace.ts`, `prepared-compaction-runtime.ts`,
+   `attempt-prompt-helpers.ts`. Inspected each: all are spawn-depth limit
+   enforcement, subagent capability gating, or cron/subagent session
+   classification for compaction and approval-routing decisions —
+   structurally unrelated to wake-gating. None duplicate the settle-wake
+   exclusion pattern this initiative replaced. **False alarm, ruled out —
+   no other wake path needs naming as an inconsistency.**
+
+4. **Other "recompute live at retry time" anti-patterns near wake/announce
+   code.** Grepped `subagent-announce-delivery.ts` and siblings for
+   recompute/per-attempt/per-retry patterns beyond the two this initiative
+   already fixed. Found the pinned-delivery-mode read site itself
+   (`subagent-announce-delivery.ts:985`), which already carries the correct
+   fix and an explicit comment: "A pinned mode wins over per-attempt
+   recomputation: the first attempt's decision is the turn's contract; live
+   config/session drift must not flip it mid-retry (root causes #8/#11)."
+   No sibling site was found still recomputing a per-turn value live at
+   retry time. **No additional anti-pattern found.**
+
+5. **Broadened validation.** The broad suite the worker had queued
+   (`src/agents/` + `src/auto-reply/`, wider than the standard
+   `src/agents/subagents/` scope used throughout this initiative) completed
+   successfully before the worker was killed: 175 files, 4604 tests, all
+   green. A full-repo suite run was judged impractical time-wise per the
+   run's own instructions; the broadened scope was grep-guided to the
+   directories most plausibly importing the renamed/removed symbols, per
+   the fallback instruction.
+
+**Objective 2 conclusion:** no actionable gaps found. Every check either
+turned up nothing (docs, other wake paths, other anti-pattern instances) or
+resolved to confirmed-harmless build artifacts and intentional comments
+(stale-reference grep). This is a genuine "investigated thoroughly, nothing
+to fix" outcome, not an incomplete audit — each of the six planned checks
+was run to a specific, evidenced conclusion.
