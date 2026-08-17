@@ -40,6 +40,10 @@ import {
   getSubagentSessionRuntimeMs,
   getSubagentSessionStartedAt,
 } from "./subagent-session-metrics.js";
+import {
+  remapSubagentWaitClaimRunId,
+  rollbackSubagentWaitClaimRemap,
+} from "./subagent-wait-claim.js";
 
 const log = createSubsystemLogger("agents/subagent-registry");
 
@@ -237,6 +241,13 @@ export class SubagentRecoveryManager extends SubagentWaitManager {
       this.options.runs.delete(previousRunId);
     }
     this.options.runs.set(nextRunId, next);
+    // Claims address awaited work by runId like the frozen batch above does;
+    // an unmapped claim would read satisfied while this successor still runs.
+    const waitClaimRemap = remapSubagentWaitClaimRunId({
+      previousRunId,
+      nextRunId,
+      runs: this.options.runs,
+    });
     const killReconciliationSnapshots = this.markOlderKillReconciliationsSuperseded(next);
     const wakeSnapshots = new Map<SubagentRunRecord, RequesterSettleWakeState>();
     // Every member carries the frozen cohort. Remap them atomically with the
@@ -258,10 +269,13 @@ export class SubagentRecoveryManager extends SubagentWaitManager {
       member.requesterSettleWake = remapRequesterSettleWake(wake);
     }
     const changedRunIds = [
-      previousRunId,
-      nextRunId,
-      ...[...killReconciliationSnapshots.keys()].map((entry) => entry.runId),
-      ...[...wakeSnapshots.keys()].map((entry) => entry.runId),
+      ...new Set([
+        previousRunId,
+        nextRunId,
+        ...waitClaimRemap.entries.map((entry) => entry.runId),
+        ...[...killReconciliationSnapshots.keys()].map((entry) => entry.runId),
+        ...[...wakeSnapshots.keys()].map((entry) => entry.runId),
+      ]),
     ];
     const canReconcileAcceptedReceipt = () => {
       // Staging replaces the map entry before commit. Only this exact
@@ -312,6 +326,7 @@ export class SubagentRecoveryManager extends SubagentWaitManager {
       }
     } catch (error) {
       this.restoreKillReconciliationSnapshots(killReconciliationSnapshots);
+      rollbackSubagentWaitClaimRemap(waitClaimRemap);
       for (const [member, wake] of wakeSnapshots) {
         member.requesterSettleWake = wake;
       }

@@ -159,6 +159,54 @@ export function rollbackSubagentWaitClaimMutation(
   });
 }
 
+export type SubagentWaitClaimRemap = {
+  entries: SubagentRunRecord[];
+  previous: SubagentWaitClaim[];
+};
+
+/**
+ * Run-id adoption (steer follow-up / restart replacement) retires the previous
+ * id while the task continues under a new one. Claims address awaited work by
+ * runId and the resolver treats a missing row as settled, so an unmapped
+ * membership would read satisfied while the successor still runs — remap the
+ * retired id on every row whose claim names it (siblings carry identical
+ * copies), mirroring the frozen-batch batchRunIds remap in the same write.
+ */
+export function remapSubagentWaitClaimRunId(params: {
+  previousRunId: string;
+  nextRunId: string;
+  runs: Map<string, SubagentRunRecord>;
+}): SubagentWaitClaimRemap {
+  const remap: SubagentWaitClaimRemap = { entries: [], previous: [] };
+  if (params.previousRunId === params.nextRunId) {
+    return remap;
+  }
+  for (const entry of params.runs.values()) {
+    const claim = entry.waitClaim;
+    if (!claim?.awaitedRunIds.includes(params.previousRunId)) {
+      continue;
+    }
+    remap.entries.push(entry);
+    remap.previous.push(claim);
+    // Fresh object + array per row: the writer shares one awaitedRunIds array
+    // across siblings, so in-place mutation would corrupt rollback snapshots.
+    entry.waitClaim = {
+      ...claim,
+      awaitedRunIds: claim.awaitedRunIds
+        .map((runId) => (runId === params.previousRunId ? params.nextRunId : runId))
+        .toSorted(),
+    };
+  }
+  return remap;
+}
+
+/** Reverts a remap produced by {@link remapSubagentWaitClaimRunId}. */
+export function rollbackSubagentWaitClaimRemap(remap: SubagentWaitClaimRemap): void {
+  remap.entries.forEach((entry, index) => {
+    entry.waitClaim = remap.previous[index];
+  });
+}
+
 /** Persists the wait-claim on every awaited child row; rolls back on persist failure. */
 export function recordSubagentWaitClaimInRuns(params: {
   requesterSessionKey: string;
