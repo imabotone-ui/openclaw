@@ -1283,6 +1283,93 @@ describe("subagent registry seam flow", () => {
     expect(mocks.restoreSubagentRunsFromDisk).toHaveBeenCalledOnce();
   });
 
+  it("clears consumed wait-claims across requester rows when a claim-gated wake delivers", async () => {
+    // Step 3 of the wait-claim ledger: a delivered claim-gated wake consumes
+    // the requester's claim on every row carrying it, in the same persist as
+    // the batch completion, so it cannot re-trigger on the next settle sweep.
+    const endedAt = Date.now() - 1_000;
+    const claim = {
+      requesterSessionKey: "agent:main:main",
+      awaitedRunIds: ["run-claim-a", "run-claim-b"],
+      claimedAt: endedAt,
+    };
+    const rowA = createSubagentRunRecord({
+      runId: "run-claim-a",
+      childSessionKey: "agent:main:subagent:claim-a",
+      task: "claim-gated wake",
+      cleanup: "keep",
+      expectsCompletionMessage: true,
+      createdAt: endedAt - 1_000,
+      startedAt: endedAt - 900,
+      endedAt,
+      cleanupCompletedAt: endedAt,
+      completion: { required: true, resultText: "claimed findings" },
+      delivery: { status: "delivered" },
+      requesterSettleWake: {
+        status: "pending",
+        attemptCount: 1,
+        nextAttemptAt: endedAt,
+        batchRunIds: ["run-claim-a"],
+      },
+      waitClaim: claim,
+    });
+    // Retained sibling row: carries the same claim but no wake state.
+    const rowB = createSubagentRunRecord({
+      runId: "run-claim-b",
+      childSessionKey: "agent:main:subagent:claim-b",
+      task: "sibling claim holder",
+      cleanup: "keep",
+      expectsCompletionMessage: true,
+      createdAt: endedAt - 2_000,
+      startedAt: endedAt - 1_900,
+      endedAt: endedAt - 1_000,
+      delivery: { status: "delivered" },
+      // A far-future retry keeps this row retained (not instantly archived)
+      // without dispatching its own wake during the test.
+      requesterSettleWake: {
+        status: "pending",
+        attemptCount: 1,
+        nextAttemptAt: Date.now() + 60_000,
+        batchRunIds: ["run-claim-b"],
+      },
+      waitClaim: claim,
+    });
+    mocks.restoreSubagentRunsFromDisk.mockImplementation(((params: {
+      runs: Map<string, unknown>;
+    }) => {
+      params.runs.set(rowA.runId, rowA);
+      params.runs.set(rowB.runId, rowB);
+      return 2;
+    }) as never);
+    mocks.maybeWakeRequesterAfterAllChildrenSettled.mockImplementation(
+      async (params: {
+        settledEntry: { runId: string };
+        completeBatch(
+          runIds: readonly string[],
+          rearmGeneration?: number,
+          outcome?: unknown,
+          clearWaitClaims?: boolean,
+        ): void;
+      }) => {
+        params.completeBatch(
+          [params.settledEntry.runId],
+          undefined,
+          { delivered: true, path: "direct" },
+          true,
+        );
+        return true;
+      },
+    );
+
+    mod.initSubagentRegistry();
+
+    await waitForFast(() => {
+      expect(rowA.requesterSettleWake).toBeUndefined();
+      expect(rowA.waitClaim).toBeUndefined();
+      expect(rowB.waitClaim).toBeUndefined();
+    });
+  });
+
   it("replays a past-due requester-settle obligation during registry restore", async () => {
     const endedAt = Date.now() - 1_000;
     mocks.restoreSubagentRunsFromDisk.mockImplementation(((params: {

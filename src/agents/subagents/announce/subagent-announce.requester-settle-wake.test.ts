@@ -128,8 +128,11 @@ function completeBatch(
   runIds: readonly string[],
   rearmGeneration?: number,
   outcome?: SubagentAnnounceDeliveryResult,
+  clearWaitClaims?: boolean,
 ): void {
-  if (outcome) {
+  if (clearWaitClaims === true) {
+    completeBatchSpy(runIds, rearmGeneration, outcome, clearWaitClaims);
+  } else if (outcome) {
     completeBatchSpy(runIds, rearmGeneration, outcome);
   } else if (rearmGeneration === undefined) {
     completeBatchSpy(runIds);
@@ -358,10 +361,13 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
     expect(deliverSpy).not.toHaveBeenCalled();
   });
 
-  it("leaves nested orchestrators to the descendant-settle wake", async () => {
+  // Regression locks for step 3 of the wait-claim ledger: cron and nested
+  // requesters without a satisfied claim keep the pre-cutover zero-delivery
+  // completion; only a satisfied claim earns a real wake attempt.
+  it("completes a nested batch with zero delivery when the requester holds no claim", async () => {
     const nestedRequester = "agent:main:subagent:middle";
     sessionStore[nestedRequester] = { sessionId: "sess-middle" };
-    // A qualifying drained wave, so the depth guard is what rejects.
+    // A qualifying drained wave, so the missing claim is what rejects.
     registryRuntimeMock.listSubagentRunsForRequester.mockReturnValue([
       makeSettledChild({ runId: "run-a", requesterSessionKey: nestedRequester }),
       makeSettledChild({ runId: "run-b", requesterSessionKey: nestedRequester }),
@@ -373,15 +379,143 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
 
     expect(woke).toBe(false);
     expect(deliverSpy).not.toHaveBeenCalled();
+    expect(completeBatchSpy).toHaveBeenCalledWith(["run-a", "run-b"]);
   });
 
-  it("skips cron requester sessions", async () => {
+  it("completes a cron batch with zero delivery when the requester holds no claim", async () => {
+    const cronRequester = "agent:main:cron:daily-report";
+    sessionStore[cronRequester] = { sessionId: "sess-cron" };
+    const child = makeSettledChild({ runId: "run-cron", requesterSessionKey: cronRequester });
+    registryRuntimeMock.listSubagentRunsForRequester.mockReturnValue([child]);
+
     const woke = await maybeWakeRequesterAfterAllChildrenSettled(
-      wakeParams({ requesterSessionKey: "agent:main:cron:daily-report" }),
+      wakeParams({ requesterSessionKey: cronRequester, settledEntry: child }),
     );
 
     expect(woke).toBe(false);
     expect(deliverSpy).not.toHaveBeenCalled();
+    expect(completeBatchSpy).toHaveBeenCalledWith(["run-cron"]);
+  });
+
+  describe("claim-gated cron and nested requesters (step 3 cutover)", () => {
+    const CRON_REQUESTER = "agent:main:cron:daily-report";
+    const NESTED_REQUESTER = "agent:main:subagent:middle";
+
+    function claimedChild(
+      runId: string,
+      requesterSessionKey: string,
+      awaitedRunIds: string[],
+      overrides: SettledChildOverrides = {},
+    ): SubagentRunRecord {
+      return makeSettledChild({
+        runId,
+        requesterSessionKey,
+        waitClaim: { requesterSessionKey, awaitedRunIds, claimedAt: 5_000 },
+        ...overrides,
+      });
+    }
+
+    it("wakes a cron requester through the normal delivery path once its claim is satisfied", async () => {
+      sessionStore[CRON_REQUESTER] = { sessionId: "sess-cron" };
+      const child = claimedChild("run-cron", CRON_REQUESTER, ["run-cron"]);
+      registryRuntimeMock.listSubagentRunsForRequester.mockReturnValue([child]);
+
+      const woke = await maybeWakeRequesterAfterAllChildrenSettled(
+        wakeParams({ requesterSessionKey: CRON_REQUESTER, settledEntry: child }),
+      );
+
+      expect(woke).toBe(true);
+      expect(deliverSpy).toHaveBeenCalledOnce();
+      const call = deliveredCallArg();
+      expect(call.targetRequesterSessionKey).toBe(CRON_REQUESTER);
+      expect(call.requesterIsSubagent).toBe(false);
+      expect(call.directIdempotencyKey).toBe(
+        `announce:requester-settle:main:${CRON_REQUESTER}:run-cron`,
+      );
+      // A delivered claim-gated wake asks the lifecycle to consume the claim.
+      expect(completeBatchSpy).toHaveBeenCalledWith(
+        ["run-cron"],
+        undefined,
+        { delivered: true, path: "direct" },
+        true,
+      );
+    });
+
+    it("wakes a nested requester internally once its yielded claim is satisfied", async () => {
+      sessionStore[NESTED_REQUESTER] = { sessionId: "sess-middle" };
+      const child = claimedChild("run-n", NESTED_REQUESTER, ["run-n"], {
+        requesterSettleWake: {
+          status: "pending",
+          attemptCount: 0,
+          batchRunIds: ["run-n"],
+          requesterYieldBatch: true,
+          rearmGeneration: 1,
+        },
+      });
+      registryRuntimeMock.listSubagentRunsForRequester.mockReturnValue([child]);
+
+      const woke = await maybeWakeRequesterAfterAllChildrenSettled(
+        wakeParams({ requesterSessionKey: NESTED_REQUESTER, settledEntry: child }),
+      );
+
+      expect(woke).toBe(true);
+      expect(deliverSpy).toHaveBeenCalledOnce();
+      const call = deliveredCallArg();
+      // A nested requester is a subagent session: internal delivery only, and
+      // no user-visible-reply enforcement even for a yielded batch.
+      expect(call.requesterIsSubagent).toBe(true);
+      expect(call.requireVisibleReply).toBeUndefined();
+      expect(completeBatchSpy).toHaveBeenCalledWith(
+        ["run-n"],
+        1,
+        { delivered: true, path: "direct" },
+        true,
+      );
+    });
+
+    it.each([
+      ["cron", CRON_REQUESTER],
+      ["nested", NESTED_REQUESTER],
+    ])(
+      "still defers a %s requester with a satisfied claim while descendants await settle",
+      async (_kind, requesterSessionKey) => {
+        const child = claimedChild("run-child", requesterSessionKey, ["run-child"]);
+        registryRuntimeMock.listSubagentRunsForRequester.mockReturnValue([child]);
+        registryRuntimeMock.hasDescendantRunAwaitingSettle.mockReturnValue(true);
+
+        const woke = await maybeWakeRequesterAfterAllChildrenSettled(
+          wakeParams({ requesterSessionKey, settledEntry: child }),
+        );
+
+        expect(woke).toBe(false);
+        expect(deliverSpy).not.toHaveBeenCalled();
+        expect(completeBatchSpy).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      ["cron", CRON_REQUESTER],
+      ["nested", NESTED_REQUESTER],
+    ])(
+      "completes with zero delivery while a %s requester's claim is still pending",
+      async (_kind, requesterSessionKey) => {
+        const settled = claimedChild("run-b", requesterSessionKey, ["run-b", "run-c"]);
+        const stillRunning = claimedChild("run-c", requesterSessionKey, ["run-b", "run-c"], {
+          execution: { status: "running", startedAt: 2_000 },
+          delivery: { status: "pending" },
+          requesterSettleWake: undefined,
+        });
+        registryRuntimeMock.listSubagentRunsForRequester.mockReturnValue([settled, stillRunning]);
+
+        const woke = await maybeWakeRequesterAfterAllChildrenSettled(
+          wakeParams({ requesterSessionKey, settledEntry: settled }),
+        );
+
+        expect(woke).toBe(false);
+        expect(deliverSpy).not.toHaveBeenCalled();
+        expect(completeBatchSpy).toHaveBeenCalledWith(["run-b"]);
+      },
+    );
   });
 
   it("skips requesters whose session entry is gone", async () => {
@@ -1056,7 +1190,11 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
       expect(completeBatchSpy).toHaveBeenLastCalledWith(["run-nested-a", "run-nested-b"]);
 
       completeBatchSpy.mockClear();
-      const cron = makeSettledChild({ runId: "run-cron" });
+      const cron = makeSettledChild({
+        runId: "run-cron",
+        requesterSessionKey: "agent:main:cron:daily",
+      });
+      registryRuntimeMock.listSubagentRunsForRequester.mockReturnValue([cron]);
       expect(
         await maybeWakeRequesterAfterAllChildrenSettled(
           wakeParams({ requesterSessionKey: "agent:main:cron:daily", settledEntry: cron }),

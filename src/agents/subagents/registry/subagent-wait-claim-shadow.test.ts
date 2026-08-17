@@ -5,6 +5,11 @@ import { logWaitClaimResolverShadow } from "./subagent-wait-claim-shadow.js";
 const logDebug = vi.hoisted(() => vi.fn());
 vi.mock("../../../logger.js", () => ({ logDebug }));
 
+vi.mock("../spawn/subagent-depth.js", () => ({
+  getSubagentDepthFromSessionStore: (sessionKey: string) =>
+    sessionKey.split(":subagent:").length - 1,
+}));
+
 function makeRun(
   runId: string,
   requesterSessionKey: string,
@@ -61,18 +66,38 @@ describe("logWaitClaimResolverShadow", () => {
   });
 
   it("logs disagreement when the resolver says satisfied but the push path did not wake", () => {
-    const entry = makeRun("run-a", "agent:main:cron:nightly", {
+    const entry = makeRun("run-a", "agent:main:main", {
       execution: { status: "terminal", endedAt: 2_000 },
       delivery: { status: "delivered" },
     });
     logWaitClaimResolverShadow({
-      requesterSessionKey: "agent:main:cron:nightly",
+      requesterSessionKey: "agent:main:main",
       settledRunId: "run-a",
       pushWake: false,
       runs: new Map([[entry.runId, entry]]),
     });
     const line = logDebug.mock.calls[0]?.[0] as string;
     expect(line).toContain("[wait-claim-resolver-shadow] disagree push=false resolver=satisfied");
+  });
+
+  // Cron and nested requesters were cut over to real claim-driven wake in
+  // step 3; their shadow comparison is retired while ordinary requesters
+  // remain shadow-observed.
+  it.each([
+    ["cron", "agent:main:cron:nightly"],
+    ["nested", "agent:main:subagent:middle"],
+  ])("logs nothing for a cut-over %s requester", (_kind, requesterSessionKey) => {
+    const entry = makeRun("run-a", requesterSessionKey, {
+      execution: { status: "terminal", endedAt: 2_000 },
+      delivery: { status: "delivered" },
+    });
+    logWaitClaimResolverShadow({
+      requesterSessionKey,
+      settledRunId: "run-a",
+      pushWake: false,
+      runs: new Map([[entry.runId, entry]]),
+    });
+    expect(logDebug).not.toHaveBeenCalled();
   });
 
   it("logs pending run ids masked when the claim is not yet satisfied", () => {

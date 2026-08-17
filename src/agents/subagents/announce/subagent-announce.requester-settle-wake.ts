@@ -26,6 +26,7 @@ import type {
   SubagentRunRecord,
 } from "../registry/subagent-registry.types.js";
 import { hasSubagentRunEnded } from "../registry/subagent-run-liveness.js";
+import { resolveSubagentWaitClaim } from "../registry/subagent-wait-claim.js";
 import { getSubagentDepthFromSessionStore } from "../spawn/subagent-depth.js";
 import {
   deliverSubagentAnnouncement,
@@ -173,12 +174,18 @@ function completeRequesterSettleWakeBatch(params: {
   runIds: readonly string[];
   state: RequesterSettleWakeBatchState;
   delivery?: SubagentAnnounceDeliveryResult;
+  clearWaitClaims?: boolean;
   completeBatch(
     runIds: readonly string[],
     rearmGeneration?: number,
     delivery?: SubagentAnnounceDeliveryResult,
+    clearWaitClaims?: boolean,
   ): void;
 }): void {
+  if (params.clearWaitClaims === true) {
+    params.completeBatch(params.runIds, params.state.rearmGeneration, params.delivery, true);
+    return;
+  }
   if (params.state.rearmGeneration === undefined) {
     params.completeBatch(params.runIds, undefined, params.delivery);
     return;
@@ -200,6 +207,7 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(params: {
     runIds: readonly string[],
     rearmGeneration?: number,
     delivery?: SubagentAnnounceDeliveryResult,
+    clearWaitClaims?: boolean,
   ): void;
   signal?: AbortSignal;
 }): Promise<boolean> {
@@ -210,7 +218,12 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(params: {
     runIds: readonly string[],
     rearmGeneration?: number,
     delivery?: SubagentAnnounceDeliveryResult,
+    clearWaitClaims?: boolean,
   ): void => {
+    if (clearWaitClaims === true) {
+      params.completeBatch(runIds, rearmGeneration, delivery, true);
+      return;
+    }
     if (rearmGeneration === undefined) {
       params.completeBatch(runIds, undefined, delivery);
       return;
@@ -225,14 +238,6 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(params: {
     return false;
   }
   const admittedRearmGeneration = initialState.rearmGeneration;
-  if (isCronSessionKey(requesterSessionKey)) {
-    completeRequesterSettleWakeBatch({
-      runIds: [params.settledEntry.runId],
-      state: initialState,
-      completeBatch,
-    });
-    return false;
-  }
 
   const listedRuns = listSubagentRunsForRequester(requesterSessionKey, {
     requesterAgentId,
@@ -314,15 +319,45 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(params: {
   const requesterYieldedAfterDelivery =
     selectedState.afterRequesterYield === true ||
     (selectedState.requesterYieldBatch === true && selectedState.rearmGeneration !== undefined);
-  if (
-    requiredSettled.length === 0 ||
-    (requiredSettled.length < 2 &&
-      !hasUndeliveredRequiredCompletion &&
-      !requesterYieldedAfterDelivery) ||
+  if (requiredSettled.length === 0) {
+    completeRequesterSettleWakeBatch({
+      runIds: batchRunIds,
+      state: selectedState,
+      completeBatch,
+    });
+    return false;
+  }
+  // Step 3 cutover (wait-claim ledger): cron and nested requesters previously
+  // completed here with zero delivery attempted (root causes #3/#6). Their wake
+  // gate is now the durable claim: satisfied means every child awaited at yield
+  // has settled, so attempt the same delivery as ordinary batches. Pending or
+  // absent claims keep the old zero-delivery completion for now; ordinary
+  // requesters stay on the untouched push-path heuristics below (step 3b).
+  const isCronRequester = isCronSessionKey(requesterSessionKey);
+  const isNestedRequester =
+    !isCronRequester &&
     getSubagentDepthFromSessionStore(requesterSessionKey, {
       cfg,
       agentId: requesterAgentId,
-    }) >= 1
+    }) >= 1;
+  const isClaimGatedRequester = isCronRequester || isNestedRequester;
+  if (isClaimGatedRequester) {
+    const claimResolution = resolveSubagentWaitClaim({
+      requesterSessionKey,
+      runs: new Map(requesterRuns.map((entry) => [entry.runId, entry])),
+    });
+    if (claimResolution.status !== "satisfied") {
+      completeRequesterSettleWakeBatch({
+        runIds: batchRunIds,
+        state: selectedState,
+        completeBatch,
+      });
+      return false;
+    }
+  } else if (
+    requiredSettled.length < 2 &&
+    !hasUndeliveredRequiredCompletion &&
+    !requesterYieldedAfterDelivery
   ) {
     completeRequesterSettleWakeBatch({
       runIds: batchRunIds,
@@ -355,9 +390,12 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(params: {
       }),
     ),
   );
+  // A nested requester's "final answer" is its own completion message to its
+  // parent, not a user-visible reply; enforcing visibility would dead-end it.
+  const requireVisibleReply = requesterYieldedAfterDelivery && !isNestedRequester;
   const wakeMessage = buildRequesterSettleWakeMessage({
     findings,
-    requireVisibleReply: requesterYieldedAfterDelivery,
+    requireVisibleReply,
   });
   const requesterSessionOrigin = normalizeDeliveryContext(params.requesterOrigin);
   const directOrigin = resolveAnnounceOrigin(requesterEntry, requesterSessionOrigin);
@@ -444,10 +482,12 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(params: {
         sourceChannel: INTERNAL_MESSAGE_CHANNEL,
         sourceTool: "subagent_announce",
         targetRequesterSessionKey: requesterSessionKey,
-        requesterIsSubagent: false,
+        // Nested requesters are subagent sessions: deliver internally only,
+        // never through an external best-effort channel target.
+        requesterIsSubagent: isNestedRequester,
         expectsCompletionMessage: false,
         requireDirectDelivery: true,
-        ...(requesterYieldedAfterDelivery ? { requireVisibleReply: true } : {}),
+        ...(requireVisibleReply ? { requireVisibleReply: true } : {}),
         directIdempotencyKey: buildAnnounceIdempotencyKey(
           attemptIndex === 0 ? wakeKeyBase : `${wakeKeyBase}:retry-${attemptIndex}`,
         ),
@@ -496,6 +536,9 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(params: {
         state,
         completeBatch,
         delivery,
+        // A delivered claim-gated wake consumes the claim; leaving it would
+        // re-trigger a satisfied resolution on every later sibling settle.
+        ...(isClaimGatedRequester ? { clearWaitClaims: true } : {}),
       });
       return true;
     }

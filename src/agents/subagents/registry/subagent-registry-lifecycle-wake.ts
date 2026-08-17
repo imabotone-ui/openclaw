@@ -21,7 +21,11 @@ import {
   safeMarkRequiredCompletionDeliveryBlocked,
   safeSetSubagentTaskDeliveryStatus,
 } from "./subagent-registry-lifecycle-delivery.js";
-import type { RequesterSettleWakeState, SubagentRunRecord } from "./subagent-registry.types.js";
+import type {
+  RequesterSettleWakeState,
+  SubagentRunRecord,
+  SubagentWaitClaim,
+} from "./subagent-registry.types.js";
 import { hasSubagentRunEnded } from "./subagent-run-liveness.js";
 import { logWaitClaimResolverShadow } from "./subagent-wait-claim-shadow.js";
 
@@ -66,6 +70,7 @@ const completeRequesterSettleWakeBatch = (
   runIds: readonly string[],
   rearmGeneration?: number,
   outcome?: SubagentAnnounceDeliveryResult,
+  clearWaitClaims?: boolean,
 ) => {
   const params = context.options;
   const entries = runIds
@@ -79,6 +84,20 @@ const completeRequesterSettleWakeBatch = (
     return;
   }
   const requesterSessionKeys = new Set(entries.map(([, entry]) => entry.requesterSessionKey));
+  // Step 3 (wait-claim ledger): a delivered claim-gated wake consumes the
+  // requester's claim on every row carrying it — not just the batch rows —
+  // so a satisfied claim cannot re-trigger a wake on the next settle sweep.
+  // Collected before the batch loop below deletes retired rows from the map.
+  const waitClaimHolders: Array<readonly [string, SubagentRunRecord, SubagentWaitClaim]> =
+    clearWaitClaims === true && outcome?.delivered === true
+      ? [...params.runs.entries()]
+          .filter(
+            (pair): pair is [string, SubagentRunRecord & { waitClaim: SubagentWaitClaim }] =>
+              pair[1].waitClaim !== undefined &&
+              requesterSessionKeys.has(pair[1].waitClaim.requesterSessionKey),
+          )
+          .map(([runId, entry]) => [runId, entry, entry.waitClaim] as const)
+      : [];
   const previousStates = entries.map(([, entry]) => ({
     delivery: structuredClone(entry.delivery),
     requesterSettleWake: structuredClone(entry.requesterSettleWake),
@@ -122,8 +141,15 @@ const completeRequesterSettleWakeBatch = (
       entry.requesterSettleWake = undefined;
     }
   }
+  for (const [, entry] of waitClaimHolders) {
+    entry.waitClaim = undefined;
+  }
   try {
-    params.persistOrThrow(...entries.map(([runId]) => runId));
+    const persistRunIds = new Set([
+      ...entries.map(([runId]) => runId),
+      ...waitClaimHolders.map(([runId]) => runId),
+    ]);
+    params.persistOrThrow(...persistRunIds);
   } catch (error) {
     entries.forEach(([runId, entry], index) => {
       const previous = previousStates[index];
@@ -131,6 +157,9 @@ const completeRequesterSettleWakeBatch = (
       entry.delivery = previous?.delivery;
       entry.requesterSettleWake = previous?.requesterSettleWake;
       entry.retireAfterRequesterTurn = previous?.retireAfterRequesterTurn;
+    });
+    waitClaimHolders.forEach(([, entry, previousClaim]) => {
+      entry.waitClaim = previousClaim;
     });
     throw error;
   }
@@ -339,8 +368,14 @@ export function scheduleRequesterSettleWake(
         settledEntry: entry,
         transitionBatch: (runIds, state) =>
           transitionRequesterSettleWakeBatch(context, runIds, state),
-        completeBatch: (runIds, rearmGeneration, outcome) =>
-          completeRequesterSettleWakeBatch(context, runIds, rearmGeneration, outcome),
+        completeBatch: (runIds, rearmGeneration, outcome, clearWaitClaims) =>
+          completeRequesterSettleWakeBatch(
+            context,
+            runIds,
+            rearmGeneration,
+            outcome,
+            clearWaitClaims,
+          ),
       }),
     );
     // Wait-claim ledger step 2: observe-only resolver comparison, attached as
