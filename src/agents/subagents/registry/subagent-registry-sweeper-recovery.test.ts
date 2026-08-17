@@ -108,6 +108,7 @@ function createHarness(runtime: { current?: GatewayRecoveryRuntime }, entry = ru
   const callGateway = vi.fn();
   const resumeRequesterSettleWake = vi.fn();
   const warn = vi.fn();
+  const resumeOverdueSubagentWaitRetry = vi.fn();
   const sweeper = createSubagentRegistrySweeper({
     runs,
     resumedRuns: new Set(),
@@ -166,6 +167,7 @@ function createHarness(runtime: { current?: GatewayRecoveryRuntime }, entry = ru
           (candidate.swarmRequesterSessionKey ?? candidate.requesterSessionKey) ===
             requesterSessionKey,
       ),
+    resumeOverdueSubagentWaitRetry,
     warn,
   });
   onTestFinished(() => sweeper.reset());
@@ -173,6 +175,7 @@ function createHarness(runtime: { current?: GatewayRecoveryRuntime }, entry = ru
     entry,
     runs,
     callGateway,
+    resumeOverdueSubagentWaitRetry,
     completeCleanupBookkeeping,
     completeSubagentRunWithRecovery,
     emitSubagentEndedHookForRun,
@@ -945,6 +948,50 @@ describe("subagent registry recovery scheduling", () => {
 
     expect(recoverRow).toHaveBeenCalledTimes(2);
     expect(warn).toHaveBeenCalledWith("subagent run sweep failed: unexpected recovery failure");
+  });
+
+  it("re-fires an overdue durable wait-retry marker after a run-map reload", async () => {
+    // Simulated restart: the record carries a due marker but the in-memory
+    // timer (and its captured entry identity) are gone. Live run context keeps
+    // interrupted-recovery and lost-context reconciliation out of the way.
+    getAgentRunContext.mockReturnValue({});
+    const { entry, sweeper, resumeOverdueSubagentWaitRetry, completeSubagentRunWithRecovery } =
+      createHarness({ current: undefined });
+    entry.pendingWaitRetryAt = Date.now() - 60_000;
+
+    await sweeper.sweepOnce();
+
+    expect(resumeOverdueSubagentWaitRetry).toHaveBeenCalledExactlyOnceWith(entry.runId, entry);
+    expect(completeSubagentRunWithRecovery).not.toHaveBeenCalled();
+    sweeper.reset();
+  });
+
+  it("leaves a fresh wait-retry marker to its live in-memory timer", async () => {
+    getAgentRunContext.mockReturnValue({});
+    const { entry, sweeper, resumeOverdueSubagentWaitRetry } = createHarness({
+      current: undefined,
+    });
+    entry.pendingWaitRetryAt = Date.now() + 5_000;
+
+    await sweeper.sweepOnce();
+
+    expect(resumeOverdueSubagentWaitRetry).not.toHaveBeenCalled();
+    sweeper.reset();
+  });
+
+  it("ignores a stale wait-retry marker on an already-ended run", async () => {
+    getAgentRunContext.mockReturnValue({});
+    const { entry, sweeper, resumeOverdueSubagentWaitRetry } = createHarness({
+      current: undefined,
+    });
+    entry.execution = { ...entry.execution, status: "terminal", endedAt: Date.now() - 1_000 };
+    entry.delivery = { status: "delivered" };
+    entry.pendingWaitRetryAt = Date.now() - 60_000;
+
+    await sweeper.sweepOnce();
+
+    expect(resumeOverdueSubagentWaitRetry).not.toHaveBeenCalled();
+    sweeper.reset();
   });
 });
 

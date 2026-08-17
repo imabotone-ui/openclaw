@@ -7,7 +7,6 @@ import {
   getAgentEventLifecycleGeneration,
   isAgentEventLifecycleGenerationCurrent,
 } from "../../../infra/agent-events.js";
-import { isFastTestRuntimeEnv } from "../../../infra/env.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { DetachedTaskFindResult } from "../../../tasks/detached-task-runtime-contract.js";
 import {
@@ -23,7 +22,10 @@ import {
   SUBAGENT_ENDED_REASON_ERROR,
   SUBAGENT_ENDED_REASON_KILLED,
 } from "./subagent-lifecycle-events.js";
-import { shouldSuppressSubagentRecoverySessionEffects } from "./subagent-recovery-state.js";
+import {
+  RECOVERABLE_WAIT_RETRY_DELAY_MS,
+  shouldSuppressSubagentRecoverySessionEffects,
+} from "./subagent-recovery-state.js";
 import { markSubagentRunPausedAfterYield } from "./subagent-registry-run-pause.js";
 import type { SubagentCompletionRequest, SubagentRunRecord } from "./subagent-registry.types.js";
 import { compareSubagentRunGeneration } from "./subagent-run-generation.js";
@@ -31,7 +33,6 @@ import { resolveSubagentRunDeadlineMs } from "./subagent-run-timeout.js";
 import type { SubagentSessionCompletion } from "./subagent-session-reconciliation.js";
 
 const log = createSubsystemLogger("agents/subagent-registry");
-const RECOVERABLE_WAIT_RETRY_DELAY_MS = isFastTestRuntimeEnv() ? 25 : 5_000;
 const WAIT_TIMEOUT_DEADLINE_SKEW_MS = 250;
 
 function resolveHardRunTimeoutEndedAt(
@@ -236,6 +237,11 @@ export class SubagentWaitManager {
     const scheduleWaitRetry = (entry: SubagentRunRecord, reason: string, error?: string) => {
       this.options.scheduleSweep({ delayMs: 1_000 });
       const scheduledEntry = entry;
+      // Durable retry marker: the timer below is in-memory only, so a gateway
+      // restart or run-map reload between scheduling and firing would lose the
+      // retry silently. The sweeper re-fires overdue markers (root cause #4).
+      scheduledEntry.pendingWaitRetryAt = Date.now() + RECOVERABLE_WAIT_RETRY_DELAY_MS;
+      this.options.persist(scheduledEntry.runId);
       setTimeout(() => {
         const current = this.options.runs.get(runId);
         if (
@@ -258,6 +264,11 @@ export class SubagentWaitManager {
       const entryBeforeWait = this.options.runs.get(runId);
       if (!entryBeforeWait || (expectedEntry && entryBeforeWait !== expectedEntry)) {
         return;
+      }
+      if (entryBeforeWait.pendingWaitRetryAt !== undefined) {
+        // The wait is live again; the durable retry marker has been consumed.
+        entryBeforeWait.pendingWaitRetryAt = undefined;
+        this.options.persist(entryBeforeWait.runId);
       }
       const waitStartedAt = Date.now();
       const timeoutMs = capWaitToStoredDeadline
