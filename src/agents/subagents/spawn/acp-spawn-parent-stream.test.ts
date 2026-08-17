@@ -1,37 +1,31 @@
 /** Tests ACP child-to-parent stream relay notices and routing. */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
-import { mergeMockedModule } from "../../../test-utils/vitest-module-mocks.js";
 
-const enqueueSystemEventMock = vi.fn();
-const requestHeartbeatMock = vi.fn();
-const recordAcpParentStreamEventsMock = vi.fn();
+// vi.hoisted keeps every binding the hoisted factories touch initialized
+// before any factory can run; referencing top-level imports or consts there
+// throws a TDZ ReferenceError whenever another file's import graph requests
+// a mocked module first (order-dependent, so it fails only on some runs).
+const { enqueueSystemEventMock, requestHeartbeatMock, recordAcpParentStreamEventsMock } =
+  vi.hoisted(() => ({
+    enqueueSystemEventMock: vi.fn(),
+    requestHeartbeatMock: vi.fn(),
+    recordAcpParentStreamEventsMock: vi.fn(),
+  }));
 
 vi.mock("../../../infra/system-events.js", () => ({
   enqueueSystemEvent: (...args: unknown[]) => enqueueSystemEventMock(...args),
 }));
 
-vi.mock("../../../infra/heartbeat-wake.js", async () => {
-  return await mergeMockedModule(
-    await vi.importActual<typeof import("../../../infra/heartbeat-wake.js")>(
-      "../../../infra/heartbeat-wake.js",
-    ),
-    () => ({
-      requestHeartbeat: (...args: unknown[]) => requestHeartbeatMock(...args),
-    }),
-  );
-});
+vi.mock("../../../infra/heartbeat-wake.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../infra/heartbeat-wake.js")>()),
+  requestHeartbeat: (...args: unknown[]) => requestHeartbeatMock(...args),
+}));
 
-vi.mock("./acp-parent-stream-store.sqlite.js", async () => {
-  return await mergeMockedModule(
-    await vi.importActual<typeof import("./acp-parent-stream-store.sqlite.js")>(
-      "./acp-parent-stream-store.sqlite.js",
-    ),
-    () => ({
-      recordAcpParentStreamEvents: (...args: unknown[]) => recordAcpParentStreamEventsMock(...args),
-    }),
-  );
-});
+vi.mock("./acp-parent-stream-store.sqlite.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./acp-parent-stream-store.sqlite.js")>()),
+  recordAcpParentStreamEvents: (...args: unknown[]) => recordAcpParentStreamEventsMock(...args),
+}));
 
 let emitAgentEvent: typeof import("../../../infra/agent-events.js").emitAgentEvent;
 let startAcpSpawnParentStreamRelay: typeof import("./acp-spawn-parent-stream.js").startAcpSpawnParentStreamRelay;
