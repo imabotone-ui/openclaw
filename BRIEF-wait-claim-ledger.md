@@ -721,3 +721,102 @@ delivery; `isInternalAnnounceRequesterSession` survives solely as a
 harness-task delivery-routing classifier; the descendant-scope gate remains
 the one non-claim input to wake timing (no drift observed). The initiative's
 core objective is complete; the remainder is bounded, named follow-up work.
+
+### 2026-08-17 — FINAL: mismatch-branch second look resolved; initiative closed
+
+**The `source_reply_delivery_mode_mismatch` question, resolved definitively:
+the branch is KEPT — it is reachable for a legitimate reason, independently
+verified this run by tracing the full call graph rather than trusting the
+killed worker's landed comment.**
+
+- The branch now lives in `subagent-announce-delivery.ts`
+  (`resolveActiveWakeWithRetries`; the brief's `subagent-announce-active-wake.ts`
+  filename predates refactors — that file no longer exists).
+- Producer trace: the rejection is emitted by
+  `resolveReplyBackendQueueMessageMismatch`
+  (`src/auto-reply/reply/reply-run-registry.message-injection.ts`) when wake
+  options carry `sourceReplyDeliveryMode: "message_tool_only"` but the ACTIVE
+  requester run's backend handle mode differs. That backend mode is a readonly
+  fact fixed at that run's admission
+  (`reply-run-registry.contracts.ts` `ReplyBackendHandle`). It is an
+  independent authority from the completion's pinned mode: item 4's pinning
+  eliminates per-retry recompute drift of the COMPLETION's mode, but cannot
+  align it with a parent run admitted under different policy (e.g. an ordinary
+  user-prompt turn admitted `automatic` while the child's completion pinned
+  `message_tool_only`). Stripping and retrying correctly defers final
+  delivery to the active run's own negotiated tool surface; deleting the
+  branch would turn that wake into a terminal `queued: false` failure against
+  a reachable parent — stranding the completion, the worst bug class.
+- Caller trace (both callers of `resolveActiveWakeWithRetries`):
+  `sendSubagentAnnounceDirectly` sets the option (pinned or first-resolution)
+  — the live path; `maybeSteerSubagentAnnounce` never sets it, so the guard
+  (`currentOptions.sourceReplyDeliveryMode !== undefined`) is inert there.
+  No-claim requesters are covered identically: the pin lives on the run
+  record's delivery state, not the claim, precisely so per-child announce
+  retries for never-yielded requesters get the same pinned value — and the
+  mismatch remains reachable for them for the same parent-admission reason.
+- Existing coverage confirms the branch is a live behavior, not dead code:
+  `subagent-announce-delivery.test.ts` "retries active direct subagent
+  completion wake without forced message-tool mode" asserts the first attempt
+  carries `message_tool_only`, the retry strips it, and delivery succeeds
+  steered. The code comment at the branch was strengthened this run to cite
+  the producer and the caller asymmetry so it can never read as an
+  unexplained defensive leftover.
+
+**Final status against all 11 original root causes:**
+
+1. Soft-signal settle-wake — RESOLVED (steps 3/3b: claim satisfaction is the
+   hard wake gate).
+2. Single-child fast-path race — RESOLVED (step 4 item 1: turn-scoped claims;
+   `requesterYieldedAfterDelivery` retired from the wake gate).
+3. Nested-subagent exclusion — RESOLVED (step 3: depth>=1 early return gone;
+   nested requesters wake via satisfied claims, internal-only delivery).
+4. In-memory setTimeout retry state — RESOLVED (step 4 item 2: durable
+   `pendingWaitRetryAt` markers; sweeper re-fires lost timers after restart).
+5. `message_tool_only` no-fallback — PARTIALLY RESOLVED: mode-drift half fixed
+   by pinning (item 4); the fallback half (parent never calls the message
+   tool → `visible_reply_missing`, carried only by a settle wake when one
+   exists) remains a named follow-up, per the step-4 entry.
+6. Cron-session exclusion — RESOLVED (step 3: `isCronSessionKey` early return
+   gone; cron requesters wake via satisfied claims).
+7. `isInternalAnnounceRequesterSession` conflation — RESOLVED for the wake
+   gate (its original defect); survives only as a harness-task
+   delivery-routing classifier, a different concern (follow-up below).
+8. Delivery-mode recompute drift across retries — RESOLVED (item 4 pinning;
+   the retained mismatch branch is a different, correct authority — see
+   above).
+9. Restart-recovery wedge invisibility — RESOLVED AS SCOPED (item 3: wedge
+   state queryable via the run list as `recovery-wedged` + structured
+   reason); proactive requester notification remains a follow-up.
+10. Compaction-vs-wake race — RESOLVED structurally (claims persist through
+    compaction; the resolver re-checks at the next admission point regardless
+    of retry-window timing).
+11. Same mechanism as #8 — RESOLVED with #8.
+
+**Initiative status: COMPLETE as scoped in the original brief.** The durable
+wait-claim ledger exists (store, writer, resolver, single claim-gated wake,
+claim consumption on delivery), all four delivery categories (ordinary,
+cron, nested, restart-recovery) are covered, shadow mode is retired, and the
+brief's own "separate follow-up work" list (#4, #5/#8/#11, #9) has been
+executed. The one flagged open sub-point (this mismatch branch) is resolved
+above. No open items remain in this initiative.
+
+**Future work, explicitly OUT OF SCOPE for this initiative (recorded so it
+isn't lost, not open items here):**
+
+- #5 fallback half: a fallback carrier for a `message_tool_only` completion
+  whose parent never calls the message tool and holds no claim.
+- #9 notification half: exactly-once proactive requester notice when a child
+  wedges (the user-visible contract's "terminal wedge: one clear notice").
+- Retire `isInternalAnnounceRequesterSession` entirely by giving
+  `src/plugin-sdk/agent-harness-task-runtime.ts` its own delivery-routing
+  fact instead of the depth/cron classifier.
+- Cron/nested `no_claim` (never-yielded) waves stay zero-delivery by design;
+  revisit only if a product case emerges where a never-expressed wait should
+  still wake.
+- Descendant-scope gate remains the one non-claim input to wake timing;
+  transitive claim resolution deferred until/unless the dual mechanism
+  drifts (none observed).
+
+**Validation this run:** full `src/agents/subagents/` suite, `pnpm tsgo`, and
+`pnpm check:test-types` — results recorded in the commit for this entry.
