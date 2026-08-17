@@ -658,6 +658,7 @@ async function runSweepSample(childCount: number): Promise<Sample> {
     retireSupersededRun: async () => {},
     getRunsForChildSession: getSubagentRunsForChildSession,
     getRunsForCollectorGroup: () => [],
+    resumeOverdueSubagentWaitRetry: () => {},
     warn: () => {},
   });
   try {
