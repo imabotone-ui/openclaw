@@ -21,7 +21,14 @@ function resolveConcurrencyOwnerSessionKey(entry: SubagentRunRecord): string {
     : resolveControllerSessionKey(entry);
 }
 
-function isDeliveryTerminalForRequesterSettle(entry: Pick<SubagentRunRecord, "delivery">): boolean {
+/**
+ * Canonical "no completion delivery will arrive on its own anymore" predicate.
+ * Shared by descendant-settle scans and the wait-claim ledger so both agree on
+ * when a terminal child stops blocking its requester's wake.
+ */
+export function isDeliveryTerminalForRequesterSettle(
+  entry: Pick<SubagentRunRecord, "delivery">,
+): boolean {
   return (
     isDeliverySuspended(entry) ||
     entry.delivery?.disposition === "delivered" ||

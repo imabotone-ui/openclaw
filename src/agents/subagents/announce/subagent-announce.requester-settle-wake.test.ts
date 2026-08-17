@@ -1,6 +1,6 @@
 // Requester settle wake tests cover the registry-less top-level requester:
-// drain gating, batch idempotency, and the guards that keep the wake out of
-// nested/cron/single-delivered paths.
+// drain gating, batch idempotency, the wait-claim wake gate, and the guards
+// that keep the wake out of no-claim nested/cron/single-delivered paths.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SubagentRunRecord } from "../registry/subagent-registry.types.js";
 import type { SubagentAnnounceDeliveryResult } from "./subagent-announce-dispatch.js";
@@ -497,7 +497,9 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
       ["cron", CRON_REQUESTER],
       ["nested", NESTED_REQUESTER],
     ])(
-      "completes with zero delivery while a %s requester's claim is still pending",
+      // Step 3b: a pending claim now HOLDS the batch instead of consuming it,
+      // so this batch's findings still ride the eventual satisfied wake.
+      "holds the batch unconsumed while a %s requester's claim is still pending",
       async (_kind, requesterSessionKey) => {
         const settled = claimedChild("run-b", requesterSessionKey, ["run-b", "run-c"]);
         const stillRunning = claimedChild("run-c", requesterSessionKey, ["run-b", "run-c"], {
@@ -513,9 +515,161 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
 
         expect(woke).toBe(false);
         expect(deliverSpy).not.toHaveBeenCalled();
-        expect(completeBatchSpy).toHaveBeenCalledWith(["run-b"]);
+        expect(completeBatchSpy).not.toHaveBeenCalled();
       },
     );
+  });
+
+  describe("claim-gated ordinary requesters (step 3b cutover)", () => {
+    function claimedChild(
+      runId: string,
+      awaitedRunIds: string[],
+      overrides: SettledChildOverrides = {},
+    ): SubagentRunRecord {
+      return makeSettledChild({
+        runId,
+        waitClaim: { requesterSessionKey: REQUESTER, awaitedRunIds, claimedAt: 5_000 },
+        ...overrides,
+      });
+    }
+
+    it("wakes a single delivered child through the claim gate even without yield flags", async () => {
+      // Root cause #2 lock: the requester's yield is proven by the durable
+      // claim, not by the requesterYieldBatch/rearmGeneration timing flags.
+      const child = claimedChild("run-b", ["run-b"]);
+      registryRuntimeMock.listSubagentRunsForRequester.mockReturnValue([child]);
+
+      const woke = await maybeWakeRequesterAfterAllChildrenSettled(
+        wakeParams({ settledEntry: child }),
+      );
+
+      expect(woke).toBe(true);
+      expect(deliverSpy).toHaveBeenCalledOnce();
+      expect(deliveredCallArg().requesterIsSubagent).toBe(false);
+      // A delivered claim-gated wake asks the lifecycle to consume the claim.
+      expect(completeBatchSpy).toHaveBeenCalledWith(
+        ["run-b"],
+        undefined,
+        { delivered: true, path: "direct" },
+        true,
+      );
+    });
+
+    it("wakes a multi-child satisfied claim and consumes it on delivery", async () => {
+      const children = [
+        claimedChild("run-a", ["run-a", "run-b"], {
+          completion: { required: true, resultText: "alpha findings" },
+        }),
+        claimedChild("run-b", ["run-a", "run-b"], {
+          completion: { required: true, resultText: "bravo findings" },
+        }),
+      ];
+      registryRuntimeMock.listSubagentRunsForRequester.mockReturnValue(children);
+
+      const woke = await maybeWakeRequesterAfterAllChildrenSettled(
+        wakeParams({ settledEntry: children[1] }),
+      );
+
+      expect(woke).toBe(true);
+      const message = String(deliveredCallArg().triggerMessage);
+      expect(message).toContain("alpha findings");
+      expect(message).toContain("bravo findings");
+      expect(completeBatchSpy).toHaveBeenCalledWith(
+        ["run-a", "run-b"],
+        undefined,
+        { delivered: true, path: "direct" },
+        true,
+      );
+    });
+
+    it("holds an unfrozen wave unconsumed while the claim awaits a running sibling", async () => {
+      const settled = claimedChild("run-b", ["run-b", "run-c"]);
+      const stillRunning = claimedChild("run-c", ["run-b", "run-c"], {
+        execution: { status: "running", startedAt: 2_000 },
+        delivery: { status: "pending" },
+        requesterSettleWake: undefined,
+      });
+      registryRuntimeMock.listSubagentRunsForRequester.mockReturnValue([settled, stillRunning]);
+
+      const woke = await maybeWakeRequesterAfterAllChildrenSettled(
+        wakeParams({ settledEntry: settled }),
+      );
+
+      expect(woke).toBe(false);
+      expect(deliverSpy).not.toHaveBeenCalled();
+      expect(completeBatchSpy).not.toHaveBeenCalled();
+      expect(transitionBatchSpy).not.toHaveBeenCalled();
+    });
+
+    it("defers a frozen yielded batch while the claim awaits a running sibling", async () => {
+      // Pre-cutover the yield flags alone would wake here even though a
+      // claimed sibling was still running — the premature-wake class the
+      // ledger exists to eliminate.
+      const settled = claimedChild("run-b", ["run-b", "run-c"], {
+        requesterSettleWake: {
+          status: "pending",
+          attemptCount: 0,
+          batchRunIds: ["run-b"],
+          requesterYieldBatch: true,
+          rearmGeneration: 1,
+        },
+      });
+      const stillRunning = claimedChild("run-c", ["run-b", "run-c"], {
+        execution: { status: "running", startedAt: 2_000 },
+        delivery: { status: "pending" },
+        requesterSettleWake: undefined,
+      });
+      registryRuntimeMock.listSubagentRunsForRequester.mockReturnValue([settled, stillRunning]);
+
+      vi.useFakeTimers();
+      vi.setSystemTime(0);
+      try {
+        const woke = await maybeWakeRequesterAfterAllChildrenSettled(
+          wakeParams({ settledEntry: settled }),
+        );
+
+        expect(woke).toBe(false);
+        expect(deliverSpy).not.toHaveBeenCalled();
+        expect(completeBatchSpy).not.toHaveBeenCalled();
+        expect(transitionBatchSpy).toHaveBeenCalledWith(
+          ["run-b"],
+          expect.objectContaining({ nextAttemptAt: 30_000, rearmGeneration: 1 }),
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("treats a yield-owned intentional_non_delivery child as settled and wakes with its findings", async () => {
+      // Yield marks already-ended undelivered children intentional_non_delivery
+      // and hands terminal delivery to this wake; the claim must resolve
+      // satisfied or the wake would deadlock behind its own precondition.
+      const child = claimedChild("run-b", ["run-b"], {
+        delivery: { status: "pending", disposition: "intentional_non_delivery" },
+        completion: { required: true, resultText: "handed-off findings" },
+        requesterSettleWake: {
+          status: "pending",
+          attemptCount: 0,
+          batchRunIds: ["run-b"],
+          requesterYieldBatch: true,
+          rearmGeneration: 1,
+        },
+      });
+      registryRuntimeMock.listSubagentRunsForRequester.mockReturnValue([child]);
+
+      const woke = await maybeWakeRequesterAfterAllChildrenSettled(
+        wakeParams({ settledEntry: child }),
+      );
+
+      expect(woke).toBe(true);
+      expect(String(deliveredCallArg().triggerMessage)).toContain("handed-off findings");
+      expect(completeBatchSpy).toHaveBeenCalledWith(
+        ["run-b"],
+        1,
+        { delivered: true, path: "direct" },
+        true,
+      );
+    });
   });
 
   it("skips requesters whose session entry is gone", async () => {
