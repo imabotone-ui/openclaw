@@ -37,7 +37,6 @@ import type {
   SubagentWaitClaim,
 } from "./subagent-registry.types.js";
 import { hasSubagentRunEnded } from "./subagent-run-liveness.js";
-import { logWaitClaimResolverShadow } from "./subagent-wait-claim-shadow.js";
 
 type RequesterSettleWakeBatchState =
   import("../announce/subagent-announce.requester-settle-wake.js").RequesterSettleWakeBatchState;
@@ -429,26 +428,6 @@ export function scheduleRequesterSettleWake(
           ),
       });
     });
-    // Wait-claim ledger step 2: observe-only resolver comparison, attached as
-    // an independent branch off wakePromise (not chained ahead of .catch()/
-    // .finally() below). Chaining it inline would add a microtask tick before
-    // the cleanup .finally() runs, which is enough to make a same-tick retry
-    // sweep see the run as still scheduled and skip re-invoking the wake —
-    // shadow logging must never shift the timing of real wake/retry logic.
-    void wakePromise.then(
-      (pushWake) => {
-        logWaitClaimResolverShadow({
-          requesterSessionKey,
-          settledRunId: runId,
-          pushWake: pushWake as boolean,
-          runs: params.runs,
-        });
-      },
-      () => {
-        // Rejection is handled by the .catch() below; shadow mode has
-        // nothing to observe on failure and must not double-handle it.
-      },
-    );
     void wakePromise
       .catch((error: unknown) => {
         // Restart admission defers the durable wake to startup; it is not a delivery failure.

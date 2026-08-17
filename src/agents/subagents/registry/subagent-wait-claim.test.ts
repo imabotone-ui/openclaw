@@ -246,6 +246,28 @@ describe("resolveSubagentWaitClaim", () => {
     expect(resolution).toMatchObject({ status: "pending", unsettledRunIds: ["run-new"] });
   });
 
+  it.each([
+    ["intentional_non_delivery", { status: "pending", disposition: "intentional_non_delivery" }],
+    ["permanent_failure", { status: "failed", disposition: "permanent_failure" }],
+    ["suspended", { status: "suspended", suspendedAt: 4_000 }],
+  ] as const)(
+    "treats a terminal child whose delivery ended as %s as settled",
+    (_label, delivery) => {
+      // Settle-terminal per-child delivery means nothing more arrives on its
+      // own; the settle wake itself carries these findings, so the claim must
+      // resolve satisfied instead of deadlocking pending forever.
+      const requester = "agent:main:main";
+      const child = makeRun("run-a", requester);
+      const runs = claimedRuns(requester, child);
+
+      child.execution = { status: "terminal", endedAt: 2_000 };
+      child.delivery = delivery;
+      expect(resolveSubagentWaitClaim({ requesterSessionKey: requester, runs }).status).toBe(
+        "satisfied",
+      );
+    },
+  );
+
   it("resolves nested-subagent and cron-session requesters with no special casing", () => {
     // The push path excludes depth>=1 and cron requesters; the resolver must not.
     for (const requester of ["agent:main:subagent:parent-1", "agent:main:cron:nightly-audit"]) {

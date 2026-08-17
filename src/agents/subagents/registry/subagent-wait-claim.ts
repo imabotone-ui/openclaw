@@ -4,12 +4,20 @@
  * When a requester invokes sessions_yield, record one durable claim naming
  * every child run whose completion the requester still awaits. Deliberately
  * unconditional: nested-subagent and cron-session requesters get a claim too,
- * unlike the depth/cron exclusions in the settle-wake push paths. Nothing
- * reads this yet; the resolver lands separately in shadow mode.
+ * unlike the depth/cron exclusions the settle-wake push paths used to have.
  */
+import { isDeliveryTerminalForRequesterSettle } from "./subagent-registry-queries.js";
 import type { SubagentRunRecord, SubagentWaitClaim } from "./subagent-registry.types.js";
 
-/** A child is awaited until its completion has actually reached the requester. */
+/**
+ * A child is awaited until nothing more can arrive for it on its own: it must
+ * be terminal AND its per-child delivery must have reached a settle-terminal
+ * state (delivered, intentional_non_delivery, permanent_failure, suspended).
+ * Terminal-but-undelivered rows whose delivery the settle wake itself owns
+ * (yield marks them intentional_non_delivery) count settled here — otherwise
+ * a satisfied claim could never form and the wake carrying their findings
+ * would deadlock behind its own precondition.
+ */
 function isAwaitedByRequester(entry: SubagentRunRecord): boolean {
   if (
     entry.expectsCompletionMessage !== true ||
@@ -19,7 +27,10 @@ function isAwaitedByRequester(entry: SubagentRunRecord): boolean {
   ) {
     return false;
   }
-  return entry.execution.status !== "terminal" || entry.delivery?.status !== "delivered";
+  if (entry.execution.status !== "terminal") {
+    return true;
+  }
+  return entry.delivery?.status !== "delivered" && !isDeliveryTerminalForRequesterSettle(entry);
 }
 
 export type SubagentWaitClaimResolution =
@@ -32,7 +43,8 @@ export type SubagentWaitClaimResolution =
  * requester's latest wait-claim satisfied?" purely from the runs map.
  * Deliberately no depth/cron exclusions — nested-subagent and cron-session
  * requesters resolve identically; that uniformity is the ledger's purpose.
- * Currently consumed only by the shadow-mode observer; no wake path acts on it.
+ * Load-bearing since step 3/3b: the requester settle-wake gate defers on
+ * pending and wakes on satisfied for every requester category.
  */
 export function resolveSubagentWaitClaim(params: {
   requesterSessionKey: string;

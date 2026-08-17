@@ -378,37 +378,49 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
     finalizeRequesterAttachment(batchRunIds, selectedState);
     return false;
   }
-  // Step 3 cutover (wait-claim ledger): cron and nested requesters previously
-  // completed here with zero delivery attempted (root causes #3/#6). Their wake
-  // gate is now the durable claim: satisfied means every child awaited at yield
-  // has settled, so attempt the same delivery as ordinary batches. Pending or
-  // absent claims keep the old zero-delivery completion for now; ordinary
-  // requesters stay on the untouched push-path heuristics below (step 3b).
+  // Step 3b cutover (wait-claim ledger): the durable claim written at
+  // sessions_yield gates the wake uniformly for every requester category.
+  // Satisfied wakes (and consumes the claim on delivery); pending holds the
+  // batch unconsumed so no finding is dropped before the claim resolves.
+  const claimResolution = resolveSubagentWaitClaim({
+    requesterSessionKey,
+    runs: new Map(requesterRuns.map((entry) => [entry.runId, entry])),
+  });
+  if (claimResolution.status === "pending") {
+    // A yielded requester still awaits a claimed child (live elsewhere, or its
+    // per-child delivery is mid-flight). Completing here would drop this
+    // batch's findings from the eventual satisfied wake; defer instead.
+    if (frozenBatchRunIds && frozenBatchRunIds.length > 0) {
+      deferBatch(selectedState);
+    }
+    return false;
+  }
+  const claimSatisfied = claimResolution.status === "satisfied";
+  const isCronRequester = isCronSessionKey(requesterSessionKey);
   // Explicit yield transfers continuation to this batch at every depth (same
   // guard the ordinary push-path branch below applies) — a claim-gated nested
   // requester that just yielded is not "ordinary nested" for this purpose.
-  const isCronRequester = isCronSessionKey(requesterSessionKey);
   const isNestedRequester =
     !isCronRequester && !requesterYieldedAfterDelivery && requesterDepth >= 1;
-  const isClaimGatedRequester = isCronRequester || isNestedRequester;
-  if (isClaimGatedRequester) {
-    const claimResolution = resolveSubagentWaitClaim({
-      requesterSessionKey,
-      runs: new Map(requesterRuns.map((entry) => [entry.runId, entry])),
-    });
-    if (claimResolution.status !== "satisfied") {
+  if (!claimSatisfied) {
+    // no_claim: the requester never yielded awaiting these children. Cron and
+    // nested requesters keep the step 3 zero-delivery completion (they never
+    // had a push wake to preserve). Ordinary requesters keep the push-era
+    // no-yield behavior: wake for a multi-child consolidation or as the
+    // fallback carrier of an undelivered required completion. The yield flags
+    // remain load-bearing only because the claim writer records no claim when
+    // every awaited child already settled before the yield.
+    if (
+      isCronRequester ||
+      isNestedRequester ||
+      (requiredSettled.length < 2 &&
+        !hasUndeliveredRequiredCompletion &&
+        !requesterYieldedAfterDelivery)
+    ) {
       completeBatch(settledBatch, selectedState.rearmGeneration);
       finalizeRequesterAttachment(batchRunIds, selectedState);
       return false;
     }
-  } else if (
-    requiredSettled.length < 2 &&
-    !hasUndeliveredRequiredCompletion &&
-    !requesterYieldedAfterDelivery
-  ) {
-    completeBatch(settledBatch, selectedState.rearmGeneration);
-    finalizeRequesterAttachment(batchRunIds, selectedState);
-    return false;
   }
 
   const { entry: requesterEntry } = loadRequesterSessionEntry(
@@ -695,7 +707,7 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
         settledBatch,
         state.rearmGeneration,
         delivery,
-        isClaimGatedRequester ? true : undefined,
+        claimSatisfied ? true : undefined,
       );
       finalizeRequesterAttachment(batchRunIds, state, delivery, requesterEntry.sessionId);
       return true;
