@@ -157,3 +157,39 @@ closed/merged for narrower scopes without resolving the root cause).
 - `src/agents/tools/sessions-yield-tool.ts` -- claim-writing entry point.
 - `src/agents/subagents/registry/subagent-registry-restart-recovery.ts` --
   pattern to follow for durable state transitions across restarts.
+
+## Progress Log
+
+### 2026-08-17 — Step 1 landed on this branch (additive store + writer)
+
+Added, per "Suggested sequencing" step 1 (no behavior change):
+
+- `src/agents/subagents/registry/subagent-registry.types.ts`: new
+  `SubagentWaitClaim` type (`requesterSessionKey`, optional
+  `requesterTurnRunId`, sorted frozen `awaitedRunIds`, `claimedAt`) and an
+  optional `waitClaim` field on `SubagentRunRecord`. Persists for free through
+  the sqlite store's payload-JSON hydration; no schema change.
+- `src/agents/subagents/registry/subagent-wait-claim.ts`: claim writer
+  `recordSubagentWaitClaimInRuns`. Awaited = expectsCompletionMessage, not a
+  collector, not suppressed, not cleaned up, and not (terminal + delivered).
+  Deliberately no depth/cron exclusions. Rolls back on persist failure.
+- `src/agents/subagents/registry/subagent-registry-public-api.ts`:
+  `markRequesterTurnYielded` (the sessions_yield `onBeforeYield` path via
+  `src/agents/openclaw-tools.ts`) now also writes the claim, additive
+  alongside the existing yield marking. Existing push paths untouched.
+- `src/agents/subagents/registry/subagent-wait-claim.test.ts`: single child,
+  multi-child frozen sorted set, nested-subagent requester, cron-session
+  requester, skip rules, persist rollback.
+
+Deliberately deferred (out of scope for this run): claim resolver, any wake
+trigger or settle-wake changes, restart-recovery integration, retiring
+`isInternalAnnounceRequesterSession`/depth/cron heuristics, claim cleanup on
+satisfaction (rows currently just carry the last claim; resolver step owns
+lifecycle). Known accepted gap: if claim persist fails after yield marking
+persisted, the yield mark stands without a claim — harmless while nothing
+reads the ledger; revisit when the resolver lands.
+
+Next session (step 2): add the claim resolver as one function answering "is
+this claim satisfied", called at child completion commit, heartbeat, and
+next-turn admission, running in shadow/log-only mode and comparing its answer
+against the existing settle-wake outcomes. No cutover yet.
