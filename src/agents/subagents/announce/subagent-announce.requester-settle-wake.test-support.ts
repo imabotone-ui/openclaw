@@ -7,7 +7,7 @@ export const REQUESTER = "agent:main:main";
 export const requesterSettleKey = (suffix: string) =>
   `announce:requester-settle:main:${REQUESTER}:${suffix}`;
 
-type SettledChildOverrides = Omit<Partial<SubagentRunRecord>, "execution"> & {
+export type SettledChildOverrides = Omit<Partial<SubagentRunRecord>, "execution"> & {
   startedAt?: number;
   endedAt?: number;
   outcome?: SubagentRunRecord["execution"]["outcome"];
@@ -55,9 +55,12 @@ export function completeBatch(
   batch: readonly SubagentRunRecord[],
   rearmGeneration?: number,
   outcome?: Result,
+  clearWaitClaims?: boolean,
 ): void {
   const runIds = batch.map((entry) => entry.runId).toSorted();
-  if (outcome) {
+  if (clearWaitClaims === true) {
+    completeBatchSpy(runIds, rearmGeneration, outcome, clearWaitClaims);
+  } else if (outcome) {
     completeBatchSpy(runIds, rearmGeneration, outcome);
   } else if (rearmGeneration === undefined) {
     completeBatchSpy(runIds);
@@ -67,6 +70,9 @@ export function completeBatch(
   for (const entry of batch) {
     if (entry.requesterSettleWake?.rearmGeneration === rearmGeneration) {
       entry.requesterSettleWake = undefined;
+    }
+    if (clearWaitClaims === true) {
+      entry.waitClaim = undefined;
     }
   }
 }

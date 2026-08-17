@@ -30,6 +30,7 @@ import type {
   SubagentRunRecord,
 } from "../registry/subagent-registry.types.js";
 import { hasSubagentRunEnded } from "../registry/subagent-run-liveness.js";
+import { resolveSubagentWaitClaim } from "../registry/subagent-wait-claim.js";
 import { withRequesterCronAuthority } from "../requester-cron-authority.js";
 import {
   consumeRequesterFinalAttachment,
@@ -62,6 +63,7 @@ type RequesterSettleWakeBatchCallbacks = {
     batch: readonly SubagentRunRecord[],
     rearmGeneration?: number,
     delivery?: SubagentAnnounceDeliveryResult,
+    clearWaitClaims?: boolean,
   ) => void;
 };
 
@@ -211,11 +213,6 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
     });
   };
   const admittedRearmGeneration = initialState.rearmGeneration;
-  if (isCronSessionKey(requesterSessionKey)) {
-    completeBatch([params.settledEntry], initialState.rearmGeneration);
-    finalizeRequesterAttachment([params.settledEntry.runId], initialState);
-    return false;
-  }
 
   const listedRuns = listSubagentRunsForRequester(requesterSessionKey, {
     requesterAgentId,
@@ -376,14 +373,38 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
     cfg,
     agentId: requesterAgentId,
   });
-  // Explicit yield transfers continuation to this batch at every depth.
-  // Ordinary nested waves remain owned by the descendant-settle path.
-  if (
-    requiredSettled.length === 0 ||
-    (requiredSettled.length < 2 &&
-      !hasUndeliveredRequiredCompletion &&
-      !requesterYieldedAfterDelivery) ||
-    (!requesterYieldedAfterDelivery && requesterDepth >= 1)
+  if (requiredSettled.length === 0) {
+    completeBatch(settledBatch, selectedState.rearmGeneration);
+    finalizeRequesterAttachment(batchRunIds, selectedState);
+    return false;
+  }
+  // Step 3 cutover (wait-claim ledger): cron and nested requesters previously
+  // completed here with zero delivery attempted (root causes #3/#6). Their wake
+  // gate is now the durable claim: satisfied means every child awaited at yield
+  // has settled, so attempt the same delivery as ordinary batches. Pending or
+  // absent claims keep the old zero-delivery completion for now; ordinary
+  // requesters stay on the untouched push-path heuristics below (step 3b).
+  // Explicit yield transfers continuation to this batch at every depth (same
+  // guard the ordinary push-path branch below applies) — a claim-gated nested
+  // requester that just yielded is not "ordinary nested" for this purpose.
+  const isCronRequester = isCronSessionKey(requesterSessionKey);
+  const isNestedRequester =
+    !isCronRequester && !requesterYieldedAfterDelivery && requesterDepth >= 1;
+  const isClaimGatedRequester = isCronRequester || isNestedRequester;
+  if (isClaimGatedRequester) {
+    const claimResolution = resolveSubagentWaitClaim({
+      requesterSessionKey,
+      runs: new Map(requesterRuns.map((entry) => [entry.runId, entry])),
+    });
+    if (claimResolution.status !== "satisfied") {
+      completeBatch(settledBatch, selectedState.rearmGeneration);
+      finalizeRequesterAttachment(batchRunIds, selectedState);
+      return false;
+    }
+  } else if (
+    requiredSettled.length < 2 &&
+    !hasUndeliveredRequiredCompletion &&
+    !requesterYieldedAfterDelivery
   ) {
     completeBatch(settledBatch, selectedState.rearmGeneration);
     finalizeRequesterAttachment(batchRunIds, selectedState);
@@ -433,9 +454,12 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
   const requesterSessionOrigin = normalizeDeliveryContext(params.requesterOrigin);
   const directOrigin = resolveAnnounceOrigin(requesterEntry, requesterSessionOrigin);
   const completionChannel = normalizeMessageChannel(directOrigin?.channel);
+  // A nested requester's "final answer" is its own completion message to its
+  // parent, not a user-visible reply; enforcing visibility would dead-end it.
+  const requireVisibleReply = requesterYieldedAfterDelivery && !isNestedRequester;
   const wakeMessage = buildRequesterSettleWakeMessage({
     findings: preparedFindings.text,
-    requireVisibleReply: requesterYieldedAfterDelivery,
+    requireVisibleReply,
     parentOnly,
     children: completionRows,
     preserveModelRouteNotice: !completionChannel || !isDeliverableMessageChannel(completionChannel),
@@ -618,7 +642,7 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
                   completionRequesterSessionId: requesterEntry.sessionId,
                 }
               : {}),
-            ...(!parentOnly && requesterYieldedAfterDelivery ? { requireVisibleReply: true } : {}),
+            ...(!parentOnly && requireVisibleReply ? { requireVisibleReply: true } : {}),
             directIdempotencyKey,
             signal: params.signal,
             resolveGatewayContext,
@@ -665,7 +689,14 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
       return false;
     }
     if (delivery.delivered) {
-      completeBatch(settledBatch, state.rearmGeneration, delivery);
+      // A delivered claim-gated wake consumes the claim; leaving it would
+      // re-trigger a satisfied resolution on every later sibling settle.
+      completeBatch(
+        settledBatch,
+        state.rearmGeneration,
+        delivery,
+        isClaimGatedRequester ? true : undefined,
+      );
       finalizeRequesterAttachment(batchRunIds, state, delivery, requesterEntry.sessionId);
       return true;
     }

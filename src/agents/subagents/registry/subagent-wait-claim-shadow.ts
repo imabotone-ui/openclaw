@@ -8,6 +8,8 @@
  * (step 3 of BRIEF-wait-claim-ledger.md).
  */
 import { logDebug } from "../../../logger.js";
+import { isCronSessionKey } from "../../../sessions/session-key-utils.js";
+import { getSubagentDepthFromSessionStore } from "../spawn/subagent-depth.js";
 import { maskLifecycleIdentifier } from "./subagent-registry-lifecycle-delivery.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
 import { resolveSubagentWaitClaim } from "./subagent-wait-claim.js";
@@ -20,6 +22,15 @@ export function logWaitClaimResolverShadow(params: {
   runs: ReadonlyMap<string, SubagentRunRecord>;
 }): void {
   try {
+    // Step 3 cut cron and nested (depth >= 1) requesters over to real
+    // claim-driven wake; the push-vs-resolver comparison stays meaningful only
+    // for ordinary requesters still on the push path (retire at step 3b).
+    if (
+      isCronSessionKey(params.requesterSessionKey) ||
+      getSubagentDepthFromSessionStore(params.requesterSessionKey) >= 1
+    ) {
+      return;
+    }
     const resolution = resolveSubagentWaitClaim(params);
     if (resolution.status === "no_claim") {
       return;
