@@ -636,6 +636,21 @@ export const startSubagentAnnounceCleanupFlow = (
             }
           }
         : undefined,
+    // Pin the completion delivery mode on first resolution; every later retry
+    // or restart replay of this obligation reuses the recorded contract.
+    ...(entry.delivery?.sourceReplyDeliveryMode
+      ? { pinnedCompletionDeliveryMode: entry.delivery.sourceReplyDeliveryMode }
+      : {}),
+    onCompletionDeliveryModeResolved: (mode) => {
+      if (!context.isCleanupAttemptCurrent(runId, entry, cleanupGeneration)) {
+        return;
+      }
+      const deliveryState = ensureDeliveryState(entry);
+      if (deliveryState.sourceReplyDeliveryMode !== mode) {
+        deliveryState.sourceReplyDeliveryMode = mode;
+        params.persist(runId);
+      }
+    },
     onDeliveryResult: (delivery) => {
       const previousDropReason = entry.delivery?.lastDropReason;
       if (!context.isCleanupAttemptCurrent(runId, entry, cleanupGeneration)) {

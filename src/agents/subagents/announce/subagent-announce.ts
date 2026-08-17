@@ -210,6 +210,9 @@ type SubagentAnnounceFlowParams = {
   isCompletionOwnedByRequesterYield?: () => boolean;
   signal?: AbortSignal;
   bestEffortDeliver?: boolean;
+  /** Durable completion delivery mode pinned by the lifecycle on first attempt. */
+  pinnedCompletionDeliveryMode?: "message_tool_only" | "automatic";
+  onCompletionDeliveryModeResolved?: (mode: "message_tool_only" | "automatic") => void;
   onDeliveryResult?: (delivery: SubagentAnnounceDeliveryResult) => void;
   onBeforeDeleteChildSession?: () => boolean;
   resolveGatewayContext?: import("../../../gateway/server-methods/types.js").GatewayContextResolver;
@@ -661,6 +664,12 @@ async function runSubagentAnnounceFlowBound(
       completionRequesterSessionId: params.completionRequesterSessionId,
       bestEffortDeliver: params.bestEffortDeliver,
       directIdempotencyKey,
+      ...(params.pinnedCompletionDeliveryMode
+        ? { pinnedCompletionDeliveryMode: params.pinnedCompletionDeliveryMode }
+        : {}),
+      ...(params.onCompletionDeliveryModeResolved
+        ? { onCompletionDeliveryModeResolved: params.onCompletionDeliveryModeResolved }
+        : {}),
       onDeliveryResult: reportDeliveryResult,
       signal: params.signal,
       resolveGatewayContext: params.resolveGatewayContext,
