@@ -13,7 +13,7 @@ import {
 } from "../agents/internal-events.js";
 import {
   deliverSubagentAnnouncement,
-  isInternalAnnounceRequesterSession,
+  isInternalDeliveryRoutingSession,
   loadRequesterSessionEntry,
 } from "../agents/subagents/announce/subagent-announce-delivery.js";
 import {
@@ -209,14 +209,14 @@ export async function deliverAgentHarnessTaskCompletion(params: {
   const announceType = params.announceType?.trim() || "Agent harness task";
   const statusLabel = params.statusLabel?.trim() || params.status;
   const eventStatus = mapHarnessCompletionStatus(params.status);
-  const requesterIsSubagent = isInternalAnnounceRequesterSession(requesterSessionKey);
+  const requesterUsesInternalDelivery = isInternalDeliveryRoutingSession(requesterSessionKey);
   let directOrigin = scope.requesterOrigin;
-  if (!requesterIsSubagent) {
+  if (!requesterUsesInternalDelivery) {
     const { entry } = loadRequesterSessionEntry(requesterSessionKey);
     directOrigin = resolveAnnounceOrigin(entry, scope.requesterOrigin);
   }
   const completionDirectOrigin =
-    requesterIsSubagent || !directOrigin
+    requesterUsesInternalDelivery || !directOrigin
       ? directOrigin
       : await resolveSubagentCompletionOrigin({
           childSessionKey,
@@ -255,7 +255,7 @@ export async function deliverAgentHarnessTaskCompletion(params: {
       sourceSessionKey: childSessionKey,
       sourceTool: AGENT_HARNESS_COMPLETION_SOURCE_TOOL,
       targetRequesterSessionKey: requesterSessionKey,
-      requesterIsSubagent,
+      requesterIsSubagent: requesterUsesInternalDelivery,
       expectsCompletionMessage: true,
       bestEffortDeliver: true,
       directIdempotencyKey: buildAnnounceIdempotencyKey(params.announceId),
