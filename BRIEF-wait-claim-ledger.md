@@ -320,3 +320,96 @@ additive can still shift ordering-sensitive cleanup/retry behavior. Prefer
 attaching observers as parallel branches off the original promise rather
 than chaining them inline, as a default pattern for any future shadow/log
 instrumentation in this codebase.
+
+### 2026-08-17 — Step 3 (cron + nested cutover) landed on this branch
+
+Deliberately a scoped subset of the brief's step 3: only the two categories
+with ZERO wake coverage were cut over. Ordinary (non-cron, non-nested)
+requesters — the single-child fast path and multi-child batch logic — are
+completely untouched and remain push-path + shadow-observed.
+
+What was cut over, in
+`subagent-announce.requester-settle-wake.ts`:
+
+- The unconditional `isCronSessionKey` early-return (root cause #6) and the
+  `getSubagentDepthFromSessionStore(...) >= 1` zero-delivery completion
+  (root cause #3) are gone. Both categories now consult
+  `resolveSubagentWaitClaim` at the point where the drained batch decides
+  between completing and delivering: `satisfied` proceeds into the SAME
+  existing `deliverSubagentAnnouncement` batch machinery (idempotency keys,
+  retries, replay, dispatch bookkeeping all shared); `pending`/`no_claim`
+  keeps the pre-cutover zero-delivery completion for now (a requester that
+  never yielded or is still waiting is out of scope for this run).
+- Nested requesters deliver with `requesterIsSubagent: true` (internal-only
+  delivery — a subagent session has no external channel target) and never
+  with `requireVisibleReply` (its "final answer" is its completion message to
+  its own parent, not a user-visible reply; enforcing visibility would
+  dead-end it). Cron requesters get the standard top-level treatment.
+
+Descendant-scope decision (implemented as directed, and agreed with after
+inspection): `hasDescendantRunAwaitingSettle` remains an additional gate
+layered on claim satisfaction. Claim satisfaction is a necessary condition to
+ATTEMPT the wake for cron/nested requesters (replacing the unconditional
+skip); the existing descendant checks — the pre-batch defer and the
+pre-dispatch recheck inside the delivery section — continue to defer exactly
+as they do for every other category. Reasoning: the claim ledger records only
+the requester's DIRECT awaited children (`awaitedRunIds` frozen at yield), so
+"claim satisfied" cannot see unsettled grandchildren spawned by those
+children. Waking while a grandchild is mid-flight would hand the requester a
+"everything settled" message that is false at the tree level — exactly the
+class of premature/false wake this ledger exists to eliminate. Resolving
+claims transitively down the requester chain was considered and deferred: it
+would require walking child claims (which nested children now also write),
+and the existing descendant check already answers the same question from live
+registry rows without new claim semantics. Revisit transitive resolution only
+if step 3b finds the dual mechanism (claim + descendant scan) drifting.
+
+Claim lifecycle: a DELIVERED claim-gated wake consumes the claim.
+`completeRequesterSettleWakeBatch` in `subagent-registry-lifecycle-wake.ts`
+takes a new `clearWaitClaims` flag (threaded through the existing
+`completeBatch` callback as an optional 4th arg); when set with a delivered
+outcome it clears `waitClaim` on every retained row carrying that requester's
+claim — not just the batch rows, since one yield stamps all awaited siblings —
+staged in memory and persisted in the SAME `persistOrThrow` call as the batch
+completion bookkeeping, rolled back together on persist failure (step 1's
+atomicity discipline; no second unguarded persist). Failed/exhausted wakes do
+not clear the claim (nothing re-triggers anyway without `requesterSettleWake`
+state; step 3b owns richer failure lifecycle).
+
+Shadow mode: `logWaitClaimResolverShadow` now returns early (inside its
+try/catch, no promise-chain change — see the step 2 follow-up lesson) for
+cron and depth>=1 requesters, since they are no longer observe-only; the
+comparison line is unchanged for ordinary requesters. Grep
+`wait-claim-resolver-shadow` still finds the one wiring site.
+
+Existing-test changes, all confined to old zero-coverage cron/nested
+assertions (expected per scope): the "skips cron requester sessions" test
+became "completes a cron batch with zero delivery when the requester holds no
+claim"; the nested equivalent was reworded the same way; the mixed-obligation
+test's cron leg now feeds the cron child through `listSubagentRunsForRequester`
+(previously the early-return never listed runs); the shadow "disagreement"
+test moved off a cron requester to an ordinary one. No ordinary-requester
+test expectation was modified.
+
+New tests: cron satisfied-claim wake through the real delivery machinery
+(incl. `clearWaitClaims` handoff), nested satisfied-claim internal-only wake,
+satisfied-claim-but-unsettled-descendants still defers (both categories),
+pending-claim zero-delivery completion (both categories), no-claim
+zero-delivery regression locks (both categories), shadow silence for
+cut-over categories, and a registry-level test that a delivered claim-gated
+wake clears `waitClaim` across requester rows in the lifecycle persist.
+
+Validation: focused files green; full `src/agents/subagents/` suite green
+(179 files / 4532 tests — up from 179/4496 via the new tests, no
+reductions); `pnpm tsgo` + `pnpm check:test-types` clean.
+
+Step 3b next (future session): cut the ordinary single-child fast path and
+multi-child batch logic over to the claim gate (removing the
+`requesterYieldedAfterDelivery` timing flag, root cause #2), then retire
+shadow logging entirely (`subagent-wait-claim-shadow.ts` and its wiring in
+`subagent-registry-lifecycle-wake.ts`), retire
+`isInternalAnnounceRequesterSession` (root cause #7), and decide the
+pending/no_claim story for cron/nested (today still zero-delivery completion
+— the remaining silent path). Also fold the descendant-scope question into
+3b: either keep the descendant gate as the one non-claim input to wake
+timing, or make claims resolve transitively and delete the scan.
