@@ -1292,6 +1292,7 @@ describe("subagent registry seam flow", () => {
       requesterSessionKey: "agent:main:main",
       awaitedRunIds: ["run-claim-a", "run-claim-b"],
       claimedAt: endedAt,
+      requireVisibleReply: true,
     };
     const rowA = createSubagentRunRecord({
       runId: "run-claim-a",
@@ -3472,7 +3473,6 @@ describe("subagent registry seam flow", () => {
         status: "pending",
         attemptCount: 0,
         requesterYieldBatch: true,
-        afterRequesterYield: true,
         rearmGeneration: 1,
         batchRunIds: [SIBLING_RUN_ID, PAUSED_RUN_ID].toSorted(),
       };

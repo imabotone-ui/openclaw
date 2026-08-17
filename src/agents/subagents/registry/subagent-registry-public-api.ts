@@ -1,8 +1,10 @@
+import { isCronSessionKey } from "../../../sessions/session-key-utils.js";
 import {
   ackLeasedAgentSteeringItemsFromSubagentRuns,
   leasePendingAgentSteeringItemsFromSubagentRuns,
   releaseLeasedAgentSteeringItemsFromSubagentRuns,
 } from "../../agent-steering-queue.js";
+import { getSubagentDepthFromSessionStore } from "../spawn/subagent-depth.js";
 import type { SubagentLifecycleController } from "./subagent-registry-lifecycle.js";
 import { getSubagentRunsForChildSession } from "./subagent-registry-memory.js";
 import {
@@ -202,8 +204,16 @@ export function createSubagentRegistryPublicApi(config: {
       ...params,
       runs,
     });
+    // Pin the visible-reply contract at claim-write time. A nested requester's
+    // final answer is its completion message to its own parent, never a
+    // user-visible reply; every other yielding requester (cron included) must
+    // end its yielded turn with a visible final answer.
+    const requesterIsNested =
+      !isCronSessionKey(params.requesterSessionKey) &&
+      getSubagentDepthFromSessionStore(params.requesterSessionKey) >= 1;
     const claimMutation = applySubagentWaitClaimMutation({
       ...params,
+      requireVisibleReply: !requesterIsNested,
       runs,
     });
     if (!yieldMutation.mutated && !claimMutation.mutated) {

@@ -108,6 +108,8 @@ export type SubagentWaitClaimMutation = {
 export function applySubagentWaitClaimMutation(params: {
   requesterSessionKey: string;
   requesterTurnRunId?: string;
+  /** Pinned visible-reply contract for the satisfied-claim wake; see {@link SubagentWaitClaim}. */
+  requireVisibleReply: boolean;
   now?: number;
   runs: Map<string, SubagentRunRecord>;
 }): SubagentWaitClaimMutation {
@@ -141,6 +143,7 @@ export function applySubagentWaitClaimMutation(params: {
       ...(requesterTurnRunId ? { requesterTurnRunId } : {}),
       awaitedRunIds,
       claimedAt,
+      requireVisibleReply: params.requireVisibleReply,
     };
   }
   return { entries, previous, awaitedRunIds, mutated: true };
@@ -160,6 +163,7 @@ export function rollbackSubagentWaitClaimMutation(
 export function recordSubagentWaitClaimInRuns(params: {
   requesterSessionKey: string;
   requesterTurnRunId?: string;
+  requireVisibleReply: boolean;
   now?: number;
   runs: Map<string, SubagentRunRecord>;
   persistOrThrow(...runIds: string[]): void;

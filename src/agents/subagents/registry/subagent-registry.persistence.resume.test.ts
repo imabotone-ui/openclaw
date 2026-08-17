@@ -279,7 +279,6 @@ describe("subagent registry persistence resume", () => {
           expect(restored?.requesterSettleWake).toMatchObject({
             batchRunIds: [run.runId],
             requesterYieldBatch: true,
-            afterRequesterYield: true,
           });
           await vi.waitFor(() => expect(wakeRequester).toHaveBeenCalledOnce(), {
             timeout: 1_000,

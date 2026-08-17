@@ -181,9 +181,9 @@ export type SubagentCompletionDeliveryState = {
 };
 
 /**
- * Durable wait-claim ledger row: the requester yielded while these children
- * were unsettled. Step 1 of the wait-claim ledger — written on sessions_yield,
- * not yet read by any wake/delivery path (resolver lands separately).
+ * Durable wait-claim ledger row: the requester yielded awaiting these children.
+ * Written on sessions_yield; resolveSubagentWaitClaim gates the requester
+ * settle wake on it, and a delivered claim-gated wake consumes it.
  */
 export type SubagentWaitClaim = {
   requesterSessionKey: string;
@@ -192,6 +192,14 @@ export type SubagentWaitClaim = {
   /** Frozen awaited membership at claim time; sorted for determinism. */
   awaitedRunIds: string[];
   claimedAt: number;
+  /**
+   * Whether the satisfied-claim wake must demand a visible final answer for
+   * the yielded turn. Pinned at claim-write time (same discipline as the
+   * pinned completion delivery mode): recomputing per wake attempt from batch
+   * flags could drift across retries/rebuilt waves. Nested requesters pin
+   * false — their final answer is their own completion message to the parent.
+   */
+  requireVisibleReply?: boolean;
 };
 
 /** Durable outbox state for the top-level requester settle wake. */
@@ -207,8 +215,6 @@ export type RequesterSettleWakeState = {
   batchRunIds?: string[];
   /** Batch frozen while its spawning requester turn was yielding. */
   requesterYieldBatch?: true;
-  /** Present only when an idle requester needs a new turn after yielding. */
-  afterRequesterYield?: true;
   /** Monotonic process generation protecting a newer yield from stale completion. */
   rearmGeneration?: number;
   lastError?: string | null;

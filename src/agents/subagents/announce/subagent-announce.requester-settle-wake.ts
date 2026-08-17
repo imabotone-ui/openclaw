@@ -139,9 +139,6 @@ function readSharedBatchState(batch: readonly SubagentRunRecord[]): RequesterSet
     ...(states.some((state) => state.requesterYieldBatch === true)
       ? { requesterYieldBatch: true }
       : {}),
-    ...(states.some((state) => state.afterRequesterYield === true)
-      ? { afterRequesterYield: true }
-      : {}),
     ...(source?.rearmGeneration !== undefined ? { rearmGeneration: source.rearmGeneration } : {}),
     ...(source?.lastError !== undefined ? { lastError: source.lastError } : {}),
   };
@@ -162,7 +159,6 @@ function deferRequesterSettleWakeBatch(params: {
     ),
     batchRunIds: [...params.batchRunIds],
     ...(params.state.requesterYieldBatch === true ? { requesterYieldBatch: true } : {}),
-    ...(params.state.afterRequesterYield === true ? { afterRequesterYield: true } : {}),
     ...(params.state.rearmGeneration !== undefined
       ? { rearmGeneration: params.state.rearmGeneration }
       : {}),
@@ -314,11 +310,6 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(params: {
   const hasUndeliveredRequiredCompletion = requiredSettled.some(
     (entry) => entry.delivery?.status !== "delivered",
   );
-  // Yield flags no longer gate the wake (the claim does); they still decide
-  // whether the wake must demand a visible final answer for the yielded turn.
-  const requesterYieldedAfterDelivery =
-    selectedState.afterRequesterYield === true ||
-    (selectedState.requesterYieldBatch === true && selectedState.rearmGeneration !== undefined);
   if (requiredSettled.length === 0) {
     completeRequesterSettleWakeBatch({
       runIds: batchRunIds,
@@ -401,9 +392,12 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(params: {
       }),
     ),
   );
-  // A nested requester's "final answer" is its own completion message to its
-  // parent, not a user-visible reply; enforcing visibility would dead-end it.
-  const requireVisibleReply = requesterYieldedAfterDelivery && !isNestedRequester;
+  // Pinned at claim-write time (sessions_yield): a yield demands a visible
+  // final answer unless the requester is nested (its "final answer" is its own
+  // completion message to its parent — enforcing visibility would dead-end it).
+  // No-claim wakes never demand one: the requester never yielded awaiting this.
+  const requireVisibleReply =
+    claimResolution.status === "satisfied" && claimResolution.claim.requireVisibleReply === true;
   const wakeMessage = buildRequesterSettleWakeMessage({
     findings,
     requireVisibleReply,
@@ -472,7 +466,6 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(params: {
         attemptCount: state.attemptCount + 1,
         batchRunIds,
         ...(state.requesterYieldBatch === true ? { requesterYieldBatch: true } : {}),
-        ...(state.afterRequesterYield === true ? { afterRequesterYield: true } : {}),
         ...(state.rearmGeneration !== undefined ? { rearmGeneration: state.rearmGeneration } : {}),
       };
       params.transitionBatch(batchRunIds, state);
@@ -531,7 +524,6 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(params: {
         nextAttemptAt,
         batchRunIds,
         ...(state.requesterYieldBatch === true ? { requesterYieldBatch: true } : {}),
-        ...(state.afterRequesterYield === true ? { afterRequesterYield: true } : {}),
         ...(state.rearmGeneration !== undefined ? { rearmGeneration: state.rearmGeneration } : {}),
         lastError,
       };
@@ -587,7 +579,6 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(params: {
       nextAttemptAt,
       batchRunIds,
       ...(state.requesterYieldBatch === true ? { requesterYieldBatch: true } : {}),
-      ...(state.afterRequesterYield === true ? { afterRequesterYield: true } : {}),
       ...(state.rearmGeneration !== undefined ? { rearmGeneration: state.rearmGeneration } : {}),
       lastError,
     });

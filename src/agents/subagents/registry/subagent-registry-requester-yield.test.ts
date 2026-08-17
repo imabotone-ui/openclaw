@@ -72,7 +72,6 @@ describe("settleRequesterTurnAfterSessionSpawns", () => {
     expect(second.requesterSettleWake?.batchRunIds).toEqual(["run-a", "run-b"]);
     expect(first.requesterSettleWake).toMatchObject({
       requesterYieldBatch: true,
-      afterRequesterYield: true,
       rearmGeneration: 1,
     });
     expect(first.requesterTurnRunId).toBeUndefined();
@@ -142,7 +141,6 @@ describe("settleRequesterTurnAfterSessionSpawns", () => {
       batchRunIds: [entry.runId],
       requesterYieldBatch: true,
     });
-    expect(entry.requesterSettleWake?.afterRequesterYield).toBeUndefined();
     expect(schedule).not.toHaveBeenCalled();
   });
 
@@ -164,7 +162,6 @@ describe("settleRequesterTurnAfterSessionSpawns", () => {
     ).toBe(true);
     expect(entry.requesterSettleWake).toMatchObject({
       requesterYieldBatch: true,
-      afterRequesterYield: true,
     });
     expect(entry.delivery?.disposition).toBe("intentional_non_delivery");
     expect(schedule).toHaveBeenCalledExactlyOnceWith(entry.runId, entry);
@@ -198,7 +195,6 @@ describe("settleRequesterTurnAfterSessionSpawns", () => {
       attemptCount: 0,
       batchRunIds: ["run-alpha", "run-beta"],
       requesterYieldBatch: true,
-      afterRequesterYield: true,
       rearmGeneration: 1,
     } as const;
     expect(alpha.requesterSettleWake).toEqual(frozenState);
@@ -252,7 +248,6 @@ describe("settleRequesterTurnAfterSessionSpawns", () => {
       if (requesterYielded) {
         expect(completion.requesterSettleWake).toMatchObject({
           batchRunIds: [completion.runId],
-          afterRequesterYield: true,
         });
         expect(schedule).toHaveBeenCalledExactlyOnceWith(completion.runId, completion);
       } else {
@@ -285,7 +280,6 @@ describe("settleRequesterTurnAfterSessionSpawns", () => {
     ).toBe(true);
     expect(runs.get(entry.runId)).toBe(entry);
     expect(entry.requesterSettleWake).toMatchObject({
-      afterRequesterYield: true,
       retireAfterSettle: true,
     });
     expect(entry.retireAfterRequesterTurn).toBeUndefined();

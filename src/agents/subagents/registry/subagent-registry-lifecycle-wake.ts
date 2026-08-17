@@ -209,7 +209,6 @@ export const markRequesterSettleWakePending = (
     ...(existing?.nextAttemptAt !== undefined ? { nextAttemptAt: existing.nextAttemptAt } : {}),
     ...(existing?.batchRunIds ? { batchRunIds: [...existing.batchRunIds] } : {}),
     ...(existing?.requesterYieldBatch === true ? { requesterYieldBatch: true } : {}),
-    ...(existing?.afterRequesterYield === true ? { afterRequesterYield: true } : {}),
     ...(existing?.rearmGeneration !== undefined
       ? { rearmGeneration: existing.rearmGeneration }
       : {}),

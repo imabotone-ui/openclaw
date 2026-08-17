@@ -137,9 +137,6 @@ export function settleRequesterTurnAfterSessionSpawns(params: {
     for (const entry of entries) {
       const existing = entry.requesterSettleWake;
       const completionEnded = typeof entry.execution.endedAt === "number";
-      // An in-progress delivery may already target the requester run being aborted.
-      // Re-arm it like a delivered result so that completion cannot die with that turn.
-      const completionMayBeAttachedToYieldedTurn = completionEnded;
       if (completionEnded && entry.delivery?.status !== "delivered") {
         // The persisted yielded batch now owns terminal delivery. Mark the old
         // per-child attempt terminal so it cannot keep the batch unsettled.
@@ -153,7 +150,6 @@ export function settleRequesterTurnAfterSessionSpawns(params: {
         attemptCount: 0,
         batchRunIds,
         requesterYieldBatch: true,
-        ...(completionMayBeAttachedToYieldedTurn ? { afterRequesterYield: true } : {}),
         rearmGeneration,
         ...(existing?.retireAfterSettle === true || entry.retireAfterRequesterTurn === true
           ? { retireAfterSettle: true }
