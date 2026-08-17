@@ -820,3 +820,43 @@ isn't lost, not open items here):**
 
 **Validation this run:** full `src/agents/subagents/` suite, `pnpm tsgo`, and
 `pnpm check:test-types` — results recorded in the commit for this entry.
+
+### 2026-08-17 — Complexity reduction: items A & B (post-initiative cleanup)
+
+**Item A (`1d1ac70f80d`) — classifier rename.** Grep confirmed
+`src/plugin-sdk/agent-harness-task-runtime.ts` is the sole remaining consumer
+of `isInternalAnnounceRequesterSession` (plus its test mock; the
+`packages/plugin-sdk/dist` hit is gitignored build output). Renamed in place
+to `isInternalDeliveryRoutingSession` — its output also feeds
+`deliverSubagentAnnouncement`'s `requesterIsSubagent` routing field, so the
+concern is delivery routing broadly, not just origin resolution. Kept in
+`subagent-announce-delivery.ts` (it computes an announce-delivery fact from
+subagent session-store internals; moving it into plugin-sdk would drag those
+across the boundary). Call-site variable renamed to
+`requesterUsesInternalDelivery`; doc comment added stating the wake gate no
+longer consults it.
+
+**Item B (`2bf92678f19`) — requireVisibleReply pinned on the claim.** Note:
+`8b157cd606a` actually pinned deliveryMode on the run record's delivery state
+(per-child announces for never-yielded requesters hold no claim), but
+requireVisibleReply is settle-wake-only and yield-coupled, so the claim is
+the right pinning home as instructed. `SubagentWaitClaim` gained
+`requireVisibleReply?`, stamped by `applySubagentWaitClaimMutation` from a
+value computed once in `markRequesterTurnYielded` (`!isNested`; nested =
+non-cron depth ≥ 1 — the exact live logic; cron and ordinary pin true). The
+wake's read site now consumes the pinned claim value; no-claim wakes never
+demand a visible reply (flags could not be true without a claim since
+turn-scoped claims, `dc7e8daa01c`). `requesterYieldedAfterDelivery` and its
+sole input `afterRequesterYield` became fully dead — re-verified against
+current code: the no_claim case-3 read was already retired by `dc7e8daa01c`,
+leaving only producer + propagation spreads — so the field, its producer in
+`settleRequesterTurnAfterSessionSpawns`, and all propagation sites were
+removed. `requesterYieldBatch` stays (batch identity/admission fencing still
+read it). New tests: pin-overrides-live-flags at the wake seam, writer pins
+false verbatim, e2e claim-carries-pin assertion.
+
+**Validation:** after each item — full `src/agents/subagents/` suite green
+(item A: 175 files / 4584 tests; item B: 175 files / 4592 tests, +8 new),
+`pnpm tsgo` and `pnpm check:test-types` clean. Item B production delta is
+roughly net-neutral (comments account for the growth; two flag paths
+deleted).
