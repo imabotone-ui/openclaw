@@ -174,6 +174,20 @@ export type SubagentCompletionDeliveryState = {
     | "waiting_for_requester_turn";
 };
 
+/**
+ * Durable wait-claim ledger row: the requester yielded while these children
+ * were unsettled. Step 1 of the wait-claim ledger — written on sessions_yield,
+ * not yet read by any wake/delivery path (resolver lands separately).
+ */
+export type SubagentWaitClaim = {
+  requesterSessionKey: string;
+  /** Requester attempt that recorded this claim via sessions_yield. */
+  requesterTurnRunId?: string;
+  /** Frozen awaited membership at claim time; sorted for determinism. */
+  awaitedRunIds: string[];
+  claimedAt: number;
+};
+
 /** Durable outbox state for the top-level requester settle wake. */
 export type RequesterSettleWakeState = {
   status: "pending" | "dispatching";
@@ -275,6 +289,8 @@ export type SubagentRunRecord = {
   delivery?: SubagentCompletionDeliveryState;
   /** Durable top-level requester wake obligation, replayed after restart. */
   requesterSettleWake?: RequesterSettleWakeState;
+  /** Wait-claim ledger row shared by every child awaited by the same yield. */
+  waitClaim?: SubagentWaitClaim;
   attachmentsDir?: string;
   attachmentsRootDir?: string;
   retainAttachmentsOnKeep?: boolean;
