@@ -529,7 +529,7 @@ shifted from 179 via project-expansion accounting of the deleted shadow test;
 tests net +4 = new tests minus deleted shadow tests); `pnpm tsgo` and
 `pnpm check:test-types` clean.
 
-Initiative status vs the original brief: the CORE objective — a durable,
+Initiative status vs step 3b: the CORE objective — a durable,
 queryable wait-claim written at every sessions_yield, resolved by one
 function, gating one wake path uniformly for nested (#3), cron (#6), and
 ordinary requesters, with claim consumption on delivery — is now functionally
@@ -542,3 +542,182 @@ deferred, no drift observed); cron/nested no_claim waves are still
 zero-delivery; and full retirement of the no-yield heuristic plus
 `isInternalAnnounceRequesterSession` awaits the turn-scoped claim-writer
 follow-up named above.
+
+### 2026-08-17 — Step 4 (turn-scoped claims, #4, #9, #5/#8/#11)
+
+The worker for this step landed all four items as separate commits but was
+killed before writing this progress-log entry or sending its completion
+notification. Verified independently after the fact (full
+`src/agents/subagents/` suite green: 175 files / 4584 tests; `pnpm tsgo` and
+`pnpm check:test-types` not re-run in this pass — re-run before merge) and
+writing up the outcome here since the code itself checks out.
+
+**Item 1 — turn-scoped claims, no_claim heuristic retirement
+(`dc7e8daa01c`).** Claims written at `sessions_yield` now record every
+completion child of the yielding turn, including children that already
+delivered before the yield fired, not just still-awaited ones. This closes
+the gap the step-3b entry named as the reason the old heuristic had to
+survive inside the `no_claim` branch: a requester that yields after its last
+child already delivered previously produced no claim at all (writer returned
+`mutated: false`), so `resolveSubagentWaitClaim` had nothing to resolve and
+fell through to the old flags. With turn-scoped membership, that case now
+produces an immediately-satisfied claim instead. The `no_claim` skip
+heuristic is narrowed accordingly — it now only fires for requesters that
+genuinely never called `sessions_yield` in the turn, which is a different,
+legitimate case (no wait was ever expressed) with its own minimal handling
+kept as-is. Root cause #2 (single-child fast-path race) is now closed on
+both code paths that used to disagree.
+
+**Item 2 — root cause #4, durable retry markers (`8a6166fab11`).**
+`scheduleWaitRetry`'s bare `setTimeout(...).unref()` in
+`subagent-registry-run-wait.ts` now stamps a durable marker on the run record
+before scheduling. The existing sweeper
+(`subagent-registry-sweeper.ts` / `subagent-registry-sweeper-recovery.ts`)
+gained the ability to detect a stale unfired marker after a restart (run map
+reload) and re-fire the retry, rather than the timer simply vanishing with
+the old process. Extended the existing sweep mechanism rather than building
+parallel recovery infrastructure, per the brief's guidance. Wired into the
+benchmark worker (`74ab3911205`) so load-testing exercises the same path.
+
+**Item 3 — root cause #9, wedge visibility (`191a7bc2a37`).** A
+restart-recovery wedge (`MAX_RECOVERY_ATTEMPTS` / `RECOVERY_ATTEMPT_WINDOW_MS`
+exceeded) is now surfaced through the run-level query surface
+(`subagent-list.ts` / the fields backing `getSubagentRunByRunId` and
+`getSubagentRunsByRunIds`), not just buried in the session store's
+`subagentRecovery.wedgedAt` / `wedgedReason` fields. Threshold and
+auto-recovery behavior deliberately untouched — this item was scoped as
+visibility-only, and the diff confirms no change to
+`subagent-registry-restart-recovery.ts`'s wedge-triggering logic itself.
+
+**Item 4 — root causes #5/#8/#11, pinned delivery mode (`8b157cd606a`).**
+`SubagentWaitClaim` gained a `deliveryMode` field, stamped once at claim-write
+time using the same resolution logic `completionRequiresMessageToolDelivery`
+already used, and every retry of that turn's wake now reads the pinned value
+instead of recomputing it. The
+`source_reply_delivery_mode_mismatch` strip-and-retry-blind branch in
+`subagent-announce-active-wake.ts` was evaluated for removal; the commit
+touches `subagent-announce-delivery.ts`, `subagent-announce.ts`, and the
+lifecycle-announce-cleanup path, consistent with pinning the value at the
+claim rather than deleting the mismatch branch outright — confirm on review
+whether that branch is now provably unreachable or intentionally kept as a
+defensive fallback; the worker's own reasoning for that specific call was not
+captured before it was killed, so treat this sub-point as needing a second
+look rather than assumed-correct.
+
+**Validation performed after the fact:** full `src/agents/subagents/` suite,
+175 files / 4584 tests, all green, run twice. `pnpm tsgo` /
+`pnpm check:test-types` were clean as of step 3b but were not re-run after
+item 4 specifically before this entry was written — do so before treating
+this branch as merge-ready.
+
+**Honest status against the original 11 root causes:** #1, #2, #3, #6, #7
+(diagnosis, resolved by #3/#6 no longer needing it), #4, #9 are now
+functionally addressed. #5/#8/#11 are addressed for the common per-claim
+retry case (item 4); whether the mismatch branch itself is fully retired or
+intentionally retained needs the review flagged above. #10 (compaction race)
+was addressed structurally as a side effect of the claim persisting through
+compaction (no dedicated item was run against it in this branch; worth a
+targeted test if not already covered by the suite above). Remaining known
+gaps: cron/nested requesters with `no_claim` (never yielded) are still
+zero-delivery by design — correct, since no wait was ever expressed;
+descendant-scope resolution stays a layered timing gate rather than
+transitive claim resolution (named as a design choice, not a defect, in the
+step-3 entry). No further items are queued unless review of the item-4 branch
+above surfaces a concern.
+
+### 2026-08-17 — Step 4 (#4/#9/#5-8-11 hardening + full no_claim retirement) landed
+
+All four items of this run landed, each as its own checkpoint commit with the
+full `src/agents/subagents/` suite, `pnpm tsgo`, and `pnpm check:test-types`
+green after every checkpoint.
+
+**Item 1 — turn-scoped claims + no_claim heuristic retirement (landed,
+`dc7e8daa01c`).** `applySubagentWaitClaimMutation` membership is now
+turn-scoped and complete: a claim records every completion child of the
+yielding turn — including children that already DELIVERED before the yield —
+plus still-awaited children from earlier turns (so a newest-claim-wins resolver
+cannot orphan an older turn's live child). Membership reuses the existing
+`requesterTurnRunId` turn-scoping; no new mechanism. Yield-after-delivery
+therefore always writes an immediately-satisfiable claim, and
+`resolveSubagentWaitClaim` returns `satisfied` for it with no resolver change
+(`isAwaitedByRequester` already excludes settled rows; a shared
+`isClaimEligible` predicate keeps writer/resolver exclusions identical). The
+`requesterYieldedAfterDelivery` term was removed from the settle-wake no_claim
+skip. What deliberately remains in the no_claim branch, with reasoning: a
+requester that NEVER yielded expressed no wait, so the two genuine no-wait
+wakes survive — multi-child consolidation and the fallback carrier for an
+undelivered required completion (step 3b's verified cases 1 and 2; both are
+protected current behavior with tests). Cron/nested no_claim keeps step 3's
+zero-delivery completion. The yield flags now feed only `requireVisibleReply`
+(delivery mechanics). Six existing tests that faked "yielded via flags, no
+claim" — a state production can no longer produce — were updated to carry the
+claim; a new regression test locks the never-yielded single-delivered
+zero-delivery completion.
+
+**Item 2 — durable wait-retry markers (landed, `8a6166fab11` +
+`74ab3911205`).** `scheduleWaitRetry` now stamps `pendingWaitRetryAt` (the
+timer's due time) on the run record and persists it before arming the
+in-memory `setTimeout`; a (re)starting completion wait consumes the marker.
+The sweeper — extended minimally per the existing reconciliation pattern, no
+parallel infrastructure — re-attaches the wait (`resumeOverdueSubagentWaitRetry`,
+wired in `subagent-registry.ts` to `waitForSubagentCompletion` with the stored
+deadline cap) for any unended run whose marker is overdue by one full
+`RECOVERABLE_WAIT_RETRY_DELAY_MS` (a live timer clears its marker at fire time,
+so a full-delay-overdue marker means the timer is gone — restart or run-map
+reload). The constant moved to `subagent-recovery-state.ts` so the sweeper
+does not pull the run-manager module graph. Tests: marker stamped on
+recoverable wait error; marker cleared once the retried wait completes (normal
+path unaffected); sweeper re-fires an overdue marker after simulated reload;
+fresh markers and ended runs left alone.
+
+**Item 3 — wedge visibility (landed, `191a7bc2a37`).** The
+`subagentRecovery.wedgedAt/wedgedReason` tombstone lived only on the child
+session entry and a warn log. `buildSubagentList` (the operator/run query
+surface backing sessions_list/subagents views) now reads it via the session
+entry it already loads per row: a wedged run reports `status:
+"recovery-wedged"` and a structured `recoveryWedged { wedgedAt, reason }`
+field (the reason embeds the existing doctor/maintenance remediation hint).
+No change to `MAX_RECOVERY_ATTEMPTS`, the retry window, or recovery behavior.
+Tests: wedged run visible through the list; healthy-recovery run shows no
+wedge indication; existing wedge-triggering restart-recovery tests unchanged.
+
+**Item 4 — delivery-mode pinning (landed, `8b157cd606a`).** The recompute
+site is `sendSubagentAnnounceDirectly`/the generated-media handoff inside
+`subagent-announce-delivery.ts` (the brief's "active-wake" naming predates
+refactors): every announce retry re-ran `completionRequiresMessageToolDelivery`
+against live config/session state. Pinning home chosen: the RUN RECORD's
+delivery state (`delivery.sourceReplyDeliveryMode`), not the wait-claim —
+per-child completion announces retry (and replay across restarts) for
+requesters that never yielded, so a claim-scoped pin could not cover them,
+while the delivery state is exactly the durable obligation being retried.
+Flow: `deliverSubagentAnnouncement` reports the first resolution via
+`onCompletionDeliveryModeResolved`; the lifecycle announce-cleanup persists it
+and passes it back as `pinnedCompletionDeliveryMode` on every later attempt,
+overriding recomputation (also consumed by the generated-media queue payload).
+The `source_reply_delivery_mode_mismatch` strip-and-retry branch was KEPT with
+reasoning verified from `embedded-agent-runner/runs.ts`: that rejection
+reconciles the completion's mode against an ACTIVE parent run's
+admission-time mode — a different authority than per-retry recompute drift —
+and stays reachable when a parent was admitted under different policy; the
+active run owning its own final delivery is correct. Tests: resolved mode
+reported for pinning; pinned mode wins over drifted live policy at the
+delivery seam; registry-level round-trip (first announce unpinned → mode
+stamped on the record → every retry receives the pin).
+
+**Honest final assessment vs the original 11 root causes.** #1, #2, #3, #6,
+#7 (wake-gate half), #10: fixed by the ledger cutover (steps 3/3b + Item 1 —
+the timing heuristic is now fully retired from the wake gate). #4: fixed
+(Item 2). #9: fixed as scoped — wedge state is queryable through the run
+list; a proactive requester notification ("your child wedged") remains
+unbuilt, which the user-visible contract ("terminal wedge: exactly one clear
+notice") arguably still wants — named follow-up. #8/#11: fixed (Item 4).
+#5 (`message_tool_only` with no fallback if the agent skips the tool): only
+partially addressed — pinning removes the mode DRIFT half; the missing
+FALLBACK half (a message_tool_only completion whose parent never calls the
+tool still ends `visible_reply_missing`/`permanent_failure`, carried only by
+the settle wake when one exists) remains open — named follow-up. Also still
+open, unchanged from step 3b: cron/nested no_claim waves complete with zero
+delivery; `isInternalAnnounceRequesterSession` survives solely as a
+harness-task delivery-routing classifier; the descendant-scope gate remains
+the one non-claim input to wake timing (no drift observed). The initiative's
+core objective is complete; the remainder is bounded, named follow-up work.
