@@ -130,8 +130,11 @@ export async function resolveActiveWakeWithRetries(
       outcome.reason === "source_reply_delivery_mode_mismatch" &&
       currentOptions.sourceReplyDeliveryMode !== undefined
     ) {
-      // Active requester runs own their final delivery mode. Direct-completion
-      // policy must not make an already-running automatic parent unreachable.
+      // Active requester runs own their final delivery mode (fixed at run
+      // admission). This is NOT the per-retry recompute drift the pinned mode
+      // eliminates: even a correctly pinned completion mode can disagree with
+      // a parent run admitted under different policy, and that run's own mode
+      // must win or the already-running parent becomes unreachable.
       const activeRunOptions = { ...currentOptions };
       delete activeRunOptions.sourceReplyDeliveryMode;
       currentOptions = activeRunOptions;

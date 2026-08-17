@@ -456,6 +456,8 @@ async function deliverSlackChannelAnnouncement(params: {
   runtimeConfig?: Record<string, unknown>;
   requesterSessionEntry?: SessionEntry;
   isSourceSessionEffectsAllowed?: () => boolean;
+  pinnedCompletionDeliveryMode?: "message_tool_only" | "automatic";
+  onCompletionDeliveryModeResolved?: (mode: "message_tool_only" | "automatic") => void;
 }) {
   const origin = {
     channel: "slack",
@@ -503,6 +505,12 @@ async function deliverSlackChannelAnnouncement(params: {
     sourceChannel: params.sourceChannel,
     sourceTool: params.sourceTool,
     isSourceSessionEffectsAllowed: params.isSourceSessionEffectsAllowed,
+    ...(params.pinnedCompletionDeliveryMode
+      ? { pinnedCompletionDeliveryMode: params.pinnedCompletionDeliveryMode }
+      : {}),
+    ...(params.onCompletionDeliveryModeResolved
+      ? { onCompletionDeliveryModeResolved: params.onCompletionDeliveryModeResolved }
+      : {}),
   });
 }
 
@@ -3364,6 +3372,65 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
       to: "channel:C123",
       threadId: undefined,
       sourceReplyDeliveryMode: "message_tool_only",
+    });
+  });
+
+  it("reports the resolved completion delivery mode so the lifecycle can pin it", async () => {
+    const callGateway = createGatewayMock({
+      result: {
+        payloads: [{ text: "The subagent is done." }],
+        didSendViaMessagingTool: true,
+        messagingToolSentTexts: ["The subagent is done."],
+      },
+    });
+    const onCompletionDeliveryModeResolved = vi.fn();
+    await deliverSlackChannelAnnouncement({
+      callGateway,
+      directIdempotencyKey: "announce-channel-mode-resolved",
+      sourceTool: "subagent_announce",
+      runtimeConfig: { messages: { groupChat: { visibleReplies: "message_tool" } } },
+      queueEmbeddedAgentMessageWithOutcome: createQueueOutcomeMock(false),
+      internalEvents: taskCompletionEvents({
+        childSessionId: "child-session-id",
+        taskLabel: "mode resolution smoke",
+      }),
+      onCompletionDeliveryModeResolved,
+    });
+
+    expect(onCompletionDeliveryModeResolved).toHaveBeenCalledExactlyOnceWith("message_tool_only");
+  });
+
+  it("reuses a pinned delivery mode across retries instead of recomputing policy", async () => {
+    // Root causes #8/#11: the same completion retried after a config/session
+    // flip must keep the mode its first attempt resolved, not silently switch
+    // to message-tool-only and strand the final behind an unavailable tool.
+    const callGateway = createPayloadGatewayMock({ text: "The subagent is done." });
+    const onCompletionDeliveryModeResolved = vi.fn();
+    const result = await deliverSlackChannelAnnouncement({
+      callGateway,
+      directIdempotencyKey: "announce-channel-pinned-mode",
+      sourceTool: "subagent_announce",
+      // Live policy now says message_tool_only; the pinned first-attempt
+      // contract was automatic and must win.
+      runtimeConfig: { messages: { groupChat: { visibleReplies: "message_tool" } } },
+      queueEmbeddedAgentMessageWithOutcome: createQueueOutcomeMock(false),
+      internalEvents: taskCompletionEvents({
+        childSessionId: "child-session-id",
+        taskLabel: "pinned mode smoke",
+      }),
+      pinnedCompletionDeliveryMode: "automatic",
+      onCompletionDeliveryModeResolved,
+    });
+
+    expect(result.delivered).toBe(true);
+    expect(onCompletionDeliveryModeResolved).toHaveBeenCalledExactlyOnceWith("automatic");
+    expectGatewayAgentParams(callGateway, {
+      deliver: true,
+      channel: "slack",
+      accountId: "acct-1",
+      to: "channel:C123",
+      threadId: undefined,
+      sourceReplyDeliveryMode: undefined,
     });
   });
 

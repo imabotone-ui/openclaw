@@ -5862,6 +5862,54 @@ describe("subagent registry seam flow", () => {
     });
   });
 
+  it("pins the completion delivery mode on first announce and reuses it across retries", async () => {
+    // Root causes #8/#11: each announce retry used to re-resolve the delivery
+    // mode from live config/session state; a mid-flight flip could strand the
+    // completion behind a message tool the parent never had.
+    const announceCalls: Array<{
+      pinnedCompletionDeliveryMode?: "message_tool_only" | "automatic";
+    }> = [];
+    mocks.runSubagentAnnounceFlow.mockImplementation(async (...args: unknown[]) => {
+      const announceParams = args[0] as {
+        pinnedCompletionDeliveryMode?: "message_tool_only" | "automatic";
+        onCompletionDeliveryModeResolved?: (mode: "message_tool_only" | "automatic") => void;
+      };
+      announceCalls.push({
+        pinnedCompletionDeliveryMode: announceParams.pinnedCompletionDeliveryMode,
+      });
+      // Simulate the delivery layer resolving the mode: honors the pin when
+      // present, otherwise reports the (possibly drifted) live policy answer.
+      announceParams.onCompletionDeliveryModeResolved?.(
+        announceParams.pinnedCompletionDeliveryMode ?? "message_tool_only",
+      );
+      return "retryable";
+    });
+    const endedAt = Date.parse("2026-03-24T12:00:00Z");
+    mocks.callGateway.mockResolvedValueOnce({
+      status: "ok",
+      startedAt: endedAt - 500,
+      endedAt,
+    });
+
+    mod.registerSubagentRun({
+      runId: "run-pinned-mode",
+      task: "pin completion delivery mode",
+      expectsCompletionMessage: true,
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(announceCalls[0]?.pinnedCompletionDeliveryMode).toBeUndefined();
+    expect(findRequesterRun("run-pinned-mode")?.delivery?.sourceReplyDeliveryMode).toBe(
+      "message_tool_only",
+    );
+
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(announceCalls.length).toBeGreaterThan(1);
+    for (const call of announceCalls.slice(1)) {
+      expect(call.pinnedCompletionDeliveryMode).toBe("message_tool_only");
+    }
+  });
+
   it("retries and retires completion delete runs regardless of prior attempt count", async () => {
     const endedHookRunner = {
       hasHooks: (hookName: string) => hookName === "subagent_ended",

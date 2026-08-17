@@ -144,6 +144,12 @@ export type SubagentCompletionDeliveryState = {
   lastError?: string | null;
   /** Closed result of the latest transport attempt; never doubles as delivery success. */
   disposition?: SubagentDeliveryDisposition;
+  /**
+   * Completion delivery mode pinned at the first announce attempt. Retries and
+   * restart replays reuse it; recomputing from live config/session state could
+   * flip the contract mid-flight (root cause #8).
+   */
+  sourceReplyDeliveryMode?: "message_tool_only" | "automatic";
   /** Logical obligation generation. Redrive increments it and never revives an old row. */
   generation?: number;
   queueId?: string;

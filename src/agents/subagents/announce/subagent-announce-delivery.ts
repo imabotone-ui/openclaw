@@ -97,6 +97,14 @@ export async function deliverSubagentAnnouncement(params: {
   requireVisibleReply?: boolean;
   bestEffortDeliver?: boolean;
   directIdempotencyKey: string;
+  /**
+   * Completion delivery mode pinned by the caller's durable state. Retries of
+   * the same completion must not re-resolve the mode from live config/session
+   * state — a mid-flight flip strands or misroutes the final (root cause #8).
+   */
+  pinnedCompletionDeliveryMode?: "message_tool_only" | "automatic";
+  /** Reports the resolved mode once so the lifecycle can pin it durably. */
+  onCompletionDeliveryModeResolved?: (mode: "message_tool_only" | "automatic") => void;
   onDeliveryResult?: (delivery: SubagentAnnounceDeliveryResult) => void;
   signal?: AbortSignal;
   resolveGatewayContext?: import("../../../gateway/server-methods/types.js").GatewayContextResolver;
@@ -140,16 +148,17 @@ export async function deliverSubagentAnnouncement(params: {
       const sourceReplyDeliveryMode =
         queuedRoute.route.channel === INTERNAL_MESSAGE_CHANNEL
           ? "automatic"
-          : completionRequiresMessageToolDelivery({
-                cfg,
-                requesterSessionKey: params.requesterSessionKey,
-                targetRequesterSessionKey: canonicalSessionKey,
-                requesterEntry,
-                directOrigin: effectiveDirectOrigin,
-                requesterSessionOrigin,
-              })
-            ? "message_tool_only"
-            : "automatic";
+          : (params.pinnedCompletionDeliveryMode ??
+            (completionRequiresMessageToolDelivery({
+              cfg,
+              requesterSessionKey: params.requesterSessionKey,
+              targetRequesterSessionKey: canonicalSessionKey,
+              requesterEntry,
+              directOrigin: effectiveDirectOrigin,
+              requesterSessionOrigin,
+            })
+              ? "message_tool_only"
+              : "automatic"));
       const queuePayload = {
         kind: "agentTurn",
         sessionKey: canonicalSessionKey,
@@ -256,6 +265,8 @@ export async function deliverSubagentAnnouncement(params: {
         requesterIsSubagent: params.requesterIsSubagent,
         expectsCompletionMessage: params.expectsCompletionMessage,
         requireVisibleReply: params.requireVisibleReply,
+        pinnedCompletionDeliveryMode: params.pinnedCompletionDeliveryMode,
+        onCompletionDeliveryModeResolved: params.onCompletionDeliveryModeResolved,
         onDeliveryResult: params.onDeliveryResult,
         signal: params.signal,
         bestEffortDeliver: params.bestEffortDeliver,

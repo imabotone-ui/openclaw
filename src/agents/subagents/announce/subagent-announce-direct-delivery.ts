@@ -96,6 +96,8 @@ export async function sendSubagentAnnounceDirectly(params: {
   requireVisibleReply?: boolean;
   bestEffortDeliver?: boolean;
   directIdempotencyKey: string;
+  pinnedCompletionDeliveryMode?: "message_tool_only" | "automatic";
+  onCompletionDeliveryModeResolved?: (mode: "message_tool_only" | "automatic") => void;
   completionDirectOrigin?: DeliveryContext;
   directOrigin?: DeliveryContext;
   requesterSessionOrigin?: DeliveryContext;
@@ -187,9 +189,19 @@ export async function sendSubagentAnnounceDirectly(params: {
       isSubagentCompletion &&
       deliveryTarget.deliver &&
       isDirectMessageDeliveryTarget(deliveryTarget, canonicalRequesterSessionKey);
+    // A pinned mode wins over per-attempt recomputation: the first attempt's
+    // decision is the turn's contract; live config/session drift must not flip
+    // it mid-retry (root causes #8/#11).
     const requiresMessageToolDelivery =
-      completionRouteRequiresMessageToolDelivery ||
-      subagentDirectMessageCompletionRequiresMessageTool;
+      params.expectsCompletionMessage && params.pinnedCompletionDeliveryMode !== undefined
+        ? params.pinnedCompletionDeliveryMode === "message_tool_only"
+        : completionRouteRequiresMessageToolDelivery ||
+          subagentDirectMessageCompletionRequiresMessageTool;
+    if (params.expectsCompletionMessage) {
+      params.onCompletionDeliveryModeResolved?.(
+        requiresMessageToolDelivery ? "message_tool_only" : "automatic",
+      );
+    }
     const requesterActivity = resolveRequesterSessionActivity(
       params.targetRequesterSessionKey,
       params.requesterAgentId,
