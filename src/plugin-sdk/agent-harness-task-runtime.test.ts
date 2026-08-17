@@ -21,7 +21,7 @@ vi.mock("../agents/subagents/announce/subagent-announce-delivery.js", async (imp
   return {
     ...actual,
     deliverSubagentAnnouncement: vi.fn(async () => ({ delivered: true, path: "steered" })),
-    isInternalAnnounceRequesterSession: vi.fn(() => true),
+    isInternalDeliveryRoutingSession: vi.fn(() => true),
   };
 });
 

@@ -57,7 +57,10 @@ export {
   runAnnounceDeliveryWithRetry,
 };
 
-export function isInternalAnnounceRequesterSession(sessionKey: string | undefined): boolean {
+// Delivery-routing classifier only: nested-subagent and cron requesters have no
+// external channel target, so completion delivery skips external origin resolution
+// and stays internal. The wake gate no longer consults this (claim resolver owns it).
+export function isInternalDeliveryRoutingSession(sessionKey: string | undefined): boolean {
   return getSubagentDepthFromSessionStore(sessionKey) >= 1 || isCronSessionKey(sessionKey);
 }
 
