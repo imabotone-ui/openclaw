@@ -413,3 +413,132 @@ pending/no_claim story for cron/nested (today still zero-delivery completion
 — the remaining silent path). Also fold the descendant-scope question into
 3b: either keep the descendant gate as the one non-claim input to wake
 timing, or make claims resolve transitively and delete the scan.
+
+### 2026-08-17 — Step 3b (ordinary-requester cutover + shadow retirement) landed
+
+What was cut over, in `subagent-announce.requester-settle-wake.ts`: the claim
+gate is now uniform across cron, nested, and ordinary requesters. After the
+fire-and-forget completion branch, every drained wave resolves
+`resolveSubagentWaitClaim` once:
+
+- `satisfied` → proceed into the existing `deliverSubagentAnnouncement`
+  machinery (idempotency keys, retries, replay, `requireVisibleReply` inputs
+  all untouched), and a DELIVERED wake consumes the claim via the same
+  `clearWaitClaims` lifecycle persist that step 3 added — now for every
+  requester category, not just cron/nested.
+- `pending` → the batch is HELD, never consumed: frozen batches defer via the
+  existing `deferRequesterSettleWakeBatch`; unfrozen waves return without a
+  transition and rebuild on the next settle sweep. This replaces step 3's
+  pending → zero-delivery completion for cron/nested too — consuming a batch
+  while a claimed sibling was mid-flight dropped that batch's findings from
+  the eventual wake (a silent-failure path); holding it lets the sibling's own
+  settle sweep rebuild the wave and wake with every finding.
+- `no_claim` → cron/nested keep step 3's zero-delivery completion; ordinary
+  requesters keep the pre-existing no-yield push behavior (details below).
+
+Resolver/writer predicate fix required by the cutover: `isAwaitedByRequester`
+now shares the canonical `isDeliveryTerminalForRequesterSettle` predicate
+(exported from `subagent-registry-queries.ts`) instead of a bare
+`delivery.status !== "delivered"` check. Without this, a yielded batch whose
+already-ended children were marked `intentional_non_delivery` at yield-settle
+(the batch wake OWNS their terminal delivery per
+`settleRequesterTurnAfterSessionSpawns`) could never resolve satisfied — the
+wake would deadlock behind its own precondition. Terminal children with
+`permanent_failure` or suspended delivery also count settled now, so the wake
+still fires as the fallback findings carrier for them.
+
+Empirical verification (point 2) and its outcome: the heuristic and the
+resolver DO legitimately disagree on real, currently-working, protected
+cases — and not rarely. Verified against the existing test suite (~15 tests
+including the whole restart-persistent-outbox group) rather than shadow-log
+reasoning alone:
+
+1. Multi-child no-yield waves (no claim exists, all completions delivered)
+   get a consolidation wake today. A satisfied-only gate would silently drop
+   it — a default-path regression across the mainline batch machinery.
+2. Undelivered-required-completion waves without a claim get the settle wake
+   as the fallback delivery carrier today (e.g. suspended/failed announce).
+   A satisfied-only gate would strand those findings — the worst bug class.
+3. A requester that yields AFTER its last awaited child already delivered
+   gets a wake today via the yield flags — and by writer design NO claim is
+   written in that case (`applySubagentWaitClaimMutation` returns
+   `mutated: false` when nothing is still awaited), so "satisfied" can never
+   gate it.
+
+Conclusion: full heuristic replacement is not possible with the current
+claim-writer contract (claims record only still-awaited children at yield).
+The cutover therefore replaces the heuristic exactly where the ledger is
+authoritative: a claim's `pending`/`satisfied` states override the flags
+completely (fixing root cause #2 — a raced yield whose flags are lost but
+whose claim persisted now wakes; a yielded requester with a claimed sibling
+still running now defers where the flags alone would have woken
+prematurely). The `requiredSettled.length < 2 && !hasUndeliveredRequiredCompletion
+&& !requesterYieldedAfterDelivery` skip survives ONLY in the no_claim branch,
+covering the three cases above. Fully retiring it needs a writer-contract
+change — stamping a claim for every completion child of the yielding turn,
+including already-delivered ones (turn-scoped claims) — which is a named
+follow-up, not attempted here on the highest-traffic path.
+
+Deleted: `subagent-wait-claim-shadow.ts`, `subagent-wait-claim-shadow.test.ts`,
+and the shadow wiring in `subagent-registry-lifecycle-wake.ts` (grep for
+`wait-claim-shadow`, `logWaitClaimResolverShadow`, and
+`wait-claim-resolver-shadow` across src/ and docs/ returns zero hits). Also
+deleted `src/test-utils/vitest-module-mocks.ts` (see flake note below).
+
+Deliberately left, with reasons:
+
+- `isInternalAnnounceRequesterSession` (root cause #7): still consumed by
+  `src/plugin-sdk/agent-harness-task-runtime.ts` to classify DELIVERY routing
+  (internal vs external origin resolution), a different concern from the wake
+  gate it originally conflated. The wake path no longer uses it; retiring it
+  fully means giving the harness-task path its own routing fact — follow-up.
+- `rearmGeneration` and the batch-freeze machinery: still load-bearing for
+  batch identity, admission-race fencing (a yield re-arming a row while a
+  wake is in flight), idempotency-key suffixes, and retry-timer generation
+  guards — none of which the claim replaces (the claim answers WHETHER the
+  requester waits; the generation answers WHICH admitted batch instance owns
+  the durable outbox row). Not dead code.
+- `requesterYieldedAfterDelivery` flags: still feed `requireVisibleReply`
+  (delivery mechanics, explicitly out of scope) and the no_claim wake case 3
+  above.
+
+Existing-test changes: only the two step-3 "completes with zero delivery
+while a claim is still pending" cases were rewritten (to "holds the batch
+unconsumed…") — flagged here per instructions: their asserted zero-delivery
+completion WAS the old gate's incidental (and lossy) behavior; holding the
+batch preserves its findings for the satisfied wake. No other existing test
+expectation changed. New tests: ordinary single-child satisfied-claim wake
+without yield flags (root cause #2 lock), multi-child satisfied-claim wake
+with claim consumption, pending-claim hold for unfrozen and frozen ordinary
+waves, intentional_non_delivery-settles-satisfied wake, resolver
+settle-terminal predicate table (intentional_non_delivery /
+permanent_failure / suspended).
+
+Unrelated flake found and fixed in the same change (pathfinder):
+`acp-spawn-parent-stream.test.ts` failed intermittently (TDZ
+`Cannot access '__vi_import_0__' before initialization`) because its hoisted
+`vi.mock` factories referenced the top-level `mergeMockedModule` import;
+step 3b's file-set change perturbed scheduling enough to surface it.
+Reproduced on this branch, confirmed green at the parent commit, converted to
+the sibling tests' `vi.hoisted` + `importOriginal` pattern, and deleted the
+helper (this test was its only consumer).
+
+Validation: focused files green; full `src/agents/subagents/` suite green
+twice consecutively after the flake fix (175 files / 4536 tests — file count
+shifted from 179 via project-expansion accounting of the deleted shadow test;
+tests net +4 = new tests minus deleted shadow tests); `pnpm tsgo` and
+`pnpm check:test-types` clean.
+
+Initiative status vs the original brief: the CORE objective — a durable,
+queryable wait-claim written at every sessions_yield, resolved by one
+function, gating one wake path uniformly for nested (#3), cron (#6), and
+ordinary requesters, with claim consumption on delivery — is now functionally
+complete for the requester settle-wake path, and shadow mode is retired. NOT
+yet done, per the brief's own follow-up list plus findings above: root causes
+#4 (in-memory setTimeout retries), #5/#8/#11 (delivery-mode pinning per
+claim), #9 (restart-recovery wedge surfacing); the descendant-scope gate
+remains the one non-claim input to wake timing (transitive claim resolution
+deferred, no drift observed); cron/nested no_claim waves are still
+zero-delivery; and full retirement of the no-yield heuristic plus
+`isInternalAnnounceRequesterSession` awaits the turn-scoped claim-writer
+follow-up named above.
