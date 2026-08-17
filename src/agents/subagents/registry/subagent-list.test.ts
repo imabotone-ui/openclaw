@@ -400,6 +400,103 @@ describe("buildSubagentList", () => {
     expect(list.active[0]?.line).not.toContain("1k io");
   });
 
+  it("surfaces a wedged restart recovery through the run list", async () => {
+    // Root cause #9: the wedge used to live only in a warn log. The operator
+    // query surface must show it, or the run just silently never returns.
+    const run = {
+      runId: "run-wedged",
+      childSessionKey: "agent:main:subagent:wedged",
+      requesterSessionKey: "agent:main:main",
+      requesterDisplayKey: "main",
+      task: "recover after restart",
+      cleanup: "keep",
+      createdAt: 1000,
+      execution: { status: "running", startedAt: 1000 },
+    } satisfies SubagentRunRecord;
+    addSubagentRunForTests(run);
+    const storePath = path.join(testWorkspaceDir, "sessions-subagent-list-wedged.json");
+    const wedgedAt = Date.now() - 5_000;
+    await replaceSessionEntry(
+      {
+        storePath,
+        sessionKey: "agent:main:subagent:wedged",
+      },
+      {
+        sessionId: "child-session-wedged",
+        updatedAt: Date.now(),
+        subagentRecovery: {
+          automaticAttempts: 2,
+          lastAttemptAt: wedgedAt,
+          lastRunId: "run-wedged",
+          wedgedAt,
+          wedgedReason: "subagent orphan recovery blocked after 2 rapid accepted resume attempts",
+        },
+      },
+    );
+    const cfg = {
+      commands: { text: true },
+      channels: { whatsapp: { allowFrom: ["*"] } },
+      session: { store: storePath },
+    } as OpenClawConfig;
+
+    const list = buildSubagentList({
+      cfg,
+      runs: [run],
+      recentMinutes: 30,
+      taskMaxChars: 110,
+    });
+
+    expect(list.active[0]?.status).toBe("recovery-wedged");
+    expect(list.active[0]?.recoveryWedged).toEqual({
+      wedgedAt,
+      reason: "subagent orphan recovery blocked after 2 rapid accepted resume attempts",
+    });
+    expect(list.active[0]?.line).toContain("recovery-wedged");
+  });
+
+  it("shows no wedge indication for a run whose recovery is healthy", async () => {
+    const run = {
+      runId: "run-healthy",
+      childSessionKey: "agent:main:subagent:healthy",
+      requesterSessionKey: "agent:main:main",
+      requesterDisplayKey: "main",
+      task: "normal work",
+      cleanup: "keep",
+      createdAt: 1000,
+      execution: { status: "running", startedAt: 1000 },
+    } satisfies SubagentRunRecord;
+    addSubagentRunForTests(run);
+    const storePath = path.join(testWorkspaceDir, "sessions-subagent-list-healthy.json");
+    await replaceSessionEntry(
+      {
+        storePath,
+        sessionKey: "agent:main:subagent:healthy",
+      },
+      {
+        sessionId: "child-session-healthy",
+        updatedAt: Date.now(),
+        // Attempts without a wedgedAt tombstone are normal recovery churn.
+        subagentRecovery: { automaticAttempts: 1, lastAttemptAt: Date.now() },
+      },
+    );
+    const cfg = {
+      commands: { text: true },
+      channels: { whatsapp: { allowFrom: ["*"] } },
+      session: { store: storePath },
+    } as OpenClawConfig;
+
+    const list = buildSubagentList({
+      cfg,
+      runs: [run],
+      recentMinutes: 30,
+      taskMaxChars: 110,
+    });
+
+    expect(list.active[0]?.recoveryWedged).toBeUndefined();
+    expect(list.active[0]?.status).not.toBe("recovery-wedged");
+    expect(list.active[0]?.line).not.toContain("recovery-wedged");
+  });
+
   it("keeps stale unended runs out of active and recent list output", () => {
     const now = Date.now();
     const staleRun = {

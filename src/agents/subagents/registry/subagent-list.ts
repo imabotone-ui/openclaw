@@ -20,6 +20,10 @@ import {
   truncateLine,
 } from "../../../shared/subagents-format.js";
 import { resolveModelDisplayName, resolveModelDisplayRef } from "../../model-selection-display.js";
+import {
+  formatSubagentRecoveryWedgedReason,
+  isSubagentRecoveryWedgedEntry,
+} from "./subagent-recovery-state.js";
 import { subagentRuns } from "./subagent-registry-memory.js";
 import { buildSubagentRunReadIndexFromRuns } from "./subagent-registry-queries.js";
 import {
@@ -51,6 +55,8 @@ type SubagentListItem = {
   totalTokens?: number;
   startedAt?: number;
   endedAt?: number;
+  /** Automatic restart recovery tombstoned; operator action is required. */
+  recoveryWedged?: { wedgedAt: number; reason: string };
 };
 
 type BuiltSubagentList = {
@@ -224,7 +230,18 @@ export function buildSubagentList(params: {
     const totalTokens = resolveTotalTokens(sessionEntry);
     const usageText = formatTokenUsageDisplay(sessionEntry);
     const pendingDescendants = pendingDescendantCount(entry.childSessionKey);
-    const status = resolveSubagentDisplayStatus(entry, pendingDescendants);
+    // Wedged restart recovery was previously a warn log only (root cause #9):
+    // silent for the operator asking "why did my subagent never come back?".
+    const recoveryWedged =
+      sessionEntry && isSubagentRecoveryWedgedEntry(sessionEntry)
+        ? {
+            wedgedAt: sessionEntry.subagentRecovery?.wedgedAt ?? 0,
+            reason: formatSubagentRecoveryWedgedReason(sessionEntry),
+          }
+        : undefined;
+    const status = recoveryWedged
+      ? "recovery-wedged"
+      : resolveSubagentDisplayStatus(entry, pendingDescendants);
     const childSessions = childSessionsByController.get(entry.childSessionKey) ?? [];
     const runtime = formatDurationCompact(runtimeMs) ?? "n/a";
     const label = truncateLine(resolveSubagentLabel(entry), 48);
@@ -249,6 +266,7 @@ export function buildSubagentList(params: {
       totalTokens,
       startedAt: getSubagentSessionStartedAt(entry),
       ...(entry.execution.endedAt ? { endedAt: entry.execution.endedAt } : {}),
+      ...(recoveryWedged ? { recoveryWedged } : {}),
     };
     index += 1;
     return view;
