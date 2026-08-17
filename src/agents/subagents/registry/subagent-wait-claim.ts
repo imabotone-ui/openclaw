@@ -7,7 +7,7 @@
  * unlike the depth/cron exclusions in the settle-wake push paths. Nothing
  * reads this yet; the resolver lands separately in shadow mode.
  */
-import type { SubagentRunRecord } from "./subagent-registry.types.js";
+import type { SubagentRunRecord, SubagentWaitClaim } from "./subagent-registry.types.js";
 
 /** A child is awaited until its completion has actually reached the requester. */
 function isAwaitedByRequester(entry: SubagentRunRecord): boolean {
@@ -22,24 +22,36 @@ function isAwaitedByRequester(entry: SubagentRunRecord): boolean {
   return entry.execution.status !== "terminal" || entry.delivery?.status !== "delivered";
 }
 
-/** Persists the wait-claim on every awaited child row; rolls back on persist failure. */
-export function recordSubagentWaitClaimInRuns(params: {
+export type SubagentWaitClaimMutation = {
+  entries: SubagentRunRecord[];
+  previous: (SubagentWaitClaim | undefined)[];
+  awaitedRunIds: string[];
+  mutated: boolean;
+};
+
+/**
+ * Mutates in-memory rows to stamp the wait-claim, without persisting. Exposed
+ * so callers that must persist this alongside another mutation (e.g. the
+ * requester-turn-yielded marker) can do so in one atomic write instead of two
+ * separate ones — see {@link recordSubagentWaitClaimInRuns} for why that
+ * matters once a resolver trusts this ledger.
+ */
+export function applySubagentWaitClaimMutation(params: {
   requesterSessionKey: string;
   requesterTurnRunId?: string;
   now?: number;
   runs: Map<string, SubagentRunRecord>;
-  persistOrThrow(...runIds: string[]): void;
-}): { awaitedRunIds: string[] } {
+}): SubagentWaitClaimMutation {
   const requesterSessionKey = params.requesterSessionKey.trim();
   const requesterTurnRunId = params.requesterTurnRunId?.trim() || undefined;
   if (!requesterSessionKey) {
-    return { awaitedRunIds: [] };
+    return { entries: [], previous: [], awaitedRunIds: [], mutated: false };
   }
   const entries = [...params.runs.values()].filter(
     (entry) => entry.requesterSessionKey === requesterSessionKey && isAwaitedByRequester(entry),
   );
   if (entries.length === 0) {
-    return { awaitedRunIds: [] };
+    return { entries: [], previous: [], awaitedRunIds: [], mutated: false };
   }
   const awaitedRunIds = entries.map((entry) => entry.runId).toSorted();
   const claimedAt = params.now ?? Date.now();
@@ -52,13 +64,36 @@ export function recordSubagentWaitClaimInRuns(params: {
       claimedAt,
     };
   }
+  return { entries, previous, awaitedRunIds, mutated: true };
+}
+
+/** Reverts a mutation produced by {@link applySubagentWaitClaimMutation}. */
+export function rollbackSubagentWaitClaimMutation(
+  entries: SubagentRunRecord[],
+  previous: (SubagentWaitClaim | undefined)[],
+): void {
+  entries.forEach((entry, index) => {
+    entry.waitClaim = previous[index];
+  });
+}
+
+/** Persists the wait-claim on every awaited child row; rolls back on persist failure. */
+export function recordSubagentWaitClaimInRuns(params: {
+  requesterSessionKey: string;
+  requesterTurnRunId?: string;
+  now?: number;
+  runs: Map<string, SubagentRunRecord>;
+  persistOrThrow(...runIds: string[]): void;
+}): { awaitedRunIds: string[] } {
+  const mutation = applySubagentWaitClaimMutation(params);
+  if (!mutation.mutated) {
+    return { awaitedRunIds: [] };
+  }
   try {
-    params.persistOrThrow(...entries.map((entry) => entry.runId));
+    params.persistOrThrow(...mutation.entries.map((entry) => entry.runId));
   } catch (error) {
-    entries.forEach((entry, index) => {
-      entry.waitClaim = previous[index];
-    });
+    rollbackSubagentWaitClaimMutation(mutation.entries, mutation.previous);
     throw error;
   }
-  return { awaitedRunIds };
+  return { awaitedRunIds: mutation.awaitedRunIds };
 }
