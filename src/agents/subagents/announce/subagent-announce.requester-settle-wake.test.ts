@@ -640,6 +640,22 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
       }
     });
 
+    it("completes a never-yielded single delivered child with zero delivery", async () => {
+      // Turn-scoped claims cover every yield (even yield-after-delivery), so
+      // no_claim now means the requester genuinely never expressed a wait:
+      // a lone delivered completion needs no consolidation wake.
+      const child = makeSettledChild({ runId: "run-b" });
+      registryRuntimeMock.listSubagentRunsForRequester.mockReturnValue([child]);
+
+      const woke = await maybeWakeRequesterAfterAllChildrenSettled(
+        wakeParams({ settledEntry: child }),
+      );
+
+      expect(woke).toBe(false);
+      expect(deliverSpy).not.toHaveBeenCalled();
+      expect(completeBatchSpy).toHaveBeenCalledWith(["run-b"]);
+    });
+
     it("treats a yield-owned intentional_non_delivery child as settled and wakes with its findings", async () => {
       // Yield marks already-ended undelivered children intentional_non_delivery
       // and hands terminal delivery to this wake; the claim must resolve
@@ -710,6 +726,7 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
     const child = makeSettledChild({
       runId: "run-b",
       delivery: { status: "delivered" },
+      waitClaim: { requesterSessionKey: REQUESTER, awaitedRunIds: ["run-b"], claimedAt: 5_000 },
       requesterSettleWake: {
         status: "pending",
         attemptCount: 0,
@@ -731,10 +748,12 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
     expect(message).not.toContain("NO_REPLY");
     expect(message).toContain("original user request still requires your visible final answer");
     expect(deliveredCallArg().directIdempotencyKey).toBe(requesterSettleKey("run-b:yield-1"));
-    expect(completeBatchSpy).toHaveBeenCalledWith(["run-b"], 1, {
-      delivered: true,
-      path: "direct",
-    });
+    expect(completeBatchSpy).toHaveBeenCalledWith(
+      ["run-b"],
+      1,
+      { delivered: true, path: "direct" },
+      true,
+    );
   });
 
   it.each([
@@ -775,6 +794,11 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
     const remainingChild = makeSettledChild({
       runId: "run-a",
       delivery: { status: "delivered" },
+      waitClaim: {
+        requesterSessionKey: REQUESTER,
+        awaitedRunIds: ["run-a", "run-b"],
+        claimedAt: 5_000,
+      },
       requesterSettleWake: {
         status: "pending",
         attemptCount: 0,
@@ -791,16 +815,22 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
 
     expect(woke).toBe(true);
     expect(deliverSpy).toHaveBeenCalledOnce();
-    expect(completeBatchSpy).toHaveBeenCalledWith(["run-a"], 1, {
-      delivered: true,
-      path: "direct",
-    });
+    expect(completeBatchSpy).toHaveBeenCalledWith(
+      ["run-a"],
+      1,
+      { delivered: true, path: "direct" },
+      true,
+    );
   });
 
   it("wakes after a requester yields with one already-delivered completion", async () => {
+    // Turn-scoped claims: the yield stamps the already-delivered child too, so
+    // the claim (immediately satisfied) is what owns this wake — not the
+    // retired requesterYieldedAfterDelivery timing heuristic.
     const child = makeSettledChild({
       runId: "run-b",
       delivery: { status: "delivered" },
+      waitClaim: { requesterSessionKey: REQUESTER, awaitedRunIds: ["run-b"], claimedAt: 5_000 },
       requesterSettleWake: {
         status: "pending",
         attemptCount: 0,
@@ -823,10 +853,12 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
     expect(message).not.toContain("NO_REPLY");
     expect(message).toContain("original user request still requires your visible final answer");
     expect(deliveredCallArg().directIdempotencyKey).toBe(requesterSettleKey("run-b:yield-1"));
-    expect(completeBatchSpy).toHaveBeenCalledWith(["run-b"], 1, {
-      delivered: true,
-      path: "direct",
-    });
+    expect(completeBatchSpy).toHaveBeenCalledWith(
+      ["run-b"],
+      1,
+      { delivered: true, path: "direct" },
+      true,
+    );
   });
 
   it("wakes for a single required completion whose announce never delivered", async () => {
@@ -918,6 +950,7 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
     const child = makeSettledChild({
       runId: "run-b",
       delivery: { status: "delivered" },
+      waitClaim: { requesterSessionKey: REQUESTER, awaitedRunIds: ["run-b"], claimedAt: 5_000 },
       requesterSettleWake: {
         status: "pending",
         attemptCount: 0,
@@ -957,10 +990,12 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
         requesterSettleKey("run-b:yield-1"),
         requesterSettleKey("run-b:yield-1:retry-1"),
       ]);
-      expect(completeBatchSpy).toHaveBeenCalledWith(["run-b"], 1, {
-        delivered: true,
-        path: "direct",
-      });
+      expect(completeBatchSpy).toHaveBeenCalledWith(
+        ["run-b"],
+        1,
+        { delivered: true, path: "direct" },
+        true,
+      );
     } finally {
       vi.useRealTimers();
     }

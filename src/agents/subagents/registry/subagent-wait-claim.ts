@@ -2,12 +2,27 @@
  * Wait-claim ledger writer (step 1 of the wait-claim ledger).
  *
  * When a requester invokes sessions_yield, record one durable claim naming
- * every child run whose completion the requester still awaits. Deliberately
+ * every completion child of the yielding turn (including already-delivered
+ * ones) plus any still-awaited children from earlier turns. Deliberately
  * unconditional: nested-subagent and cron-session requesters get a claim too,
  * unlike the depth/cron exclusions the settle-wake push paths used to have.
  */
 import { isDeliveryTerminalForRequesterSettle } from "./subagent-registry-queries.js";
 import type { SubagentRunRecord, SubagentWaitClaim } from "./subagent-registry.types.js";
+
+/**
+ * A row can ever belong to a claim only when its completion is a real
+ * requester-facing obligation: collectors, suppressed deliveries, and
+ * cleaned-up rows never wake anyone.
+ */
+function isClaimEligible(entry: SubagentRunRecord): boolean {
+  return (
+    entry.expectsCompletionMessage === true &&
+    entry.collect !== true &&
+    entry.suppressCompletionDelivery !== true &&
+    typeof entry.cleanupCompletedAt !== "number"
+  );
+}
 
 /**
  * A child is awaited until nothing more can arrive for it on its own: it must
@@ -19,12 +34,7 @@ import type { SubagentRunRecord, SubagentWaitClaim } from "./subagent-registry.t
  * would deadlock behind its own precondition.
  */
 function isAwaitedByRequester(entry: SubagentRunRecord): boolean {
-  if (
-    entry.expectsCompletionMessage !== true ||
-    entry.collect === true ||
-    entry.suppressCompletionDelivery === true ||
-    typeof entry.cleanupCompletedAt === "number"
-  ) {
+  if (!isClaimEligible(entry)) {
     return false;
   }
   if (entry.execution.status !== "terminal") {
@@ -106,8 +116,18 @@ export function applySubagentWaitClaimMutation(params: {
   if (!requesterSessionKey) {
     return { entries: [], previous: [], awaitedRunIds: [], mutated: false };
   }
+  // Turn-scoped membership: a claim records every completion child of the
+  // yielding turn — the still-awaited ones AND the ones that already delivered
+  // before the yield — plus still-awaited children from earlier turns. Without
+  // the delivered same-turn members, "yield after the last child delivered"
+  // writes no claim at all and the resolver cannot own that wake.
   const entries = [...params.runs.values()].filter(
-    (entry) => entry.requesterSessionKey === requesterSessionKey && isAwaitedByRequester(entry),
+    (entry) =>
+      entry.requesterSessionKey === requesterSessionKey &&
+      (isAwaitedByRequester(entry) ||
+        (requesterTurnRunId !== undefined &&
+          entry.requesterTurnRunId === requesterTurnRunId &&
+          isClaimEligible(entry))),
   );
   if (entries.length === 0) {
     return { entries: [], previous: [], awaitedRunIds: [], mutated: false };

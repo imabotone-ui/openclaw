@@ -314,8 +314,8 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(params: {
   const hasUndeliveredRequiredCompletion = requiredSettled.some(
     (entry) => entry.delivery?.status !== "delivered",
   );
-  // A yielded batch owns a rearm generation even when its child settles later.
-  // Otherwise a delivered single child clears the batch before its requester wakes.
+  // Yield flags no longer gate the wake (the claim does); they still decide
+  // whether the wake must demand a visible final answer for the yielded turn.
   const requesterYieldedAfterDelivery =
     selectedState.afterRequesterYield === true ||
     (selectedState.requesterYieldBatch === true && selectedState.rearmGeneration !== undefined);
@@ -357,19 +357,17 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(params: {
       agentId: requesterAgentId,
     }) >= 1;
   if (!claimSatisfied) {
-    // no_claim: the requester never yielded awaiting these children. Cron and
-    // nested requesters keep the step 3 zero-delivery completion (they never
-    // had a push wake to preserve). Ordinary requesters keep the push-era
-    // no-yield behavior: wake for a multi-child consolidation or as the
-    // fallback carrier of an undelivered required completion. The yield flags
-    // remain load-bearing only because the claim writer records no claim when
-    // every awaited child already settled before the yield.
+    // no_claim: the requester never yielded awaiting these children — claims
+    // are turn-scoped and include already-delivered children, so any yield
+    // that produced this batch also produced a resolvable claim. Cron and
+    // nested requesters complete with zero delivery (they never had a push
+    // wake to preserve). Ordinary never-yielded requesters keep the two
+    // genuine no-wait wakes: multi-child consolidation, and the fallback
+    // carrier for an undelivered required completion.
     if (
       isCronRequester ||
       isNestedRequester ||
-      (requiredSettled.length < 2 &&
-        !hasUndeliveredRequiredCompletion &&
-        !requesterYieldedAfterDelivery)
+      (requiredSettled.length < 2 && !hasUndeliveredRequiredCompletion)
     ) {
       completeRequesterSettleWakeBatch({
         runIds: batchRunIds,

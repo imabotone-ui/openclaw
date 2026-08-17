@@ -116,6 +116,62 @@ describe("recordSubagentWaitClaimInRuns", () => {
     expect(persistOrThrow).toHaveBeenCalledOnce();
   });
 
+  it("includes already-delivered same-turn children in a turn-scoped claim", () => {
+    const requester = "agent:main:main";
+    const running = makeRun("run-b", requester);
+    const deliveredSameTurn = makeRun("run-c", requester, {
+      execution: { status: "terminal", endedAt: 2_000 },
+      delivery: { status: "delivered" },
+    });
+    const deliveredOtherTurn = makeRun("run-d", requester, {
+      requesterTurnRunId: "run-other-turn",
+      execution: { status: "terminal", endedAt: 2_000 },
+      delivery: { status: "delivered" },
+    });
+    const suppressedSameTurn = makeRun("run-e", requester, {
+      suppressCompletionDelivery: true,
+    });
+    const persistOrThrow = vi.fn();
+
+    const result = recordSubagentWaitClaimInRuns({
+      requesterSessionKey: requester,
+      requesterTurnRunId: "run-requester",
+      now: NOW,
+      runs: runsMap(running, deliveredSameTurn, deliveredOtherTurn, suppressedSameTurn),
+      persistOrThrow,
+    });
+
+    expect(result.awaitedRunIds).toEqual(["run-b", "run-c"]);
+    expect(deliveredSameTurn.waitClaim).toEqual(running.waitClaim);
+    expect(deliveredOtherTurn.waitClaim).toBeUndefined();
+    expect(suppressedSameTurn.waitClaim).toBeUndefined();
+  });
+
+  it("writes an immediately-satisfiable claim when every turn child delivered before the yield", () => {
+    // Root cause #2 tail: yield-after-delivery used to write no claim at all,
+    // leaving the wake to the retired timing heuristic.
+    const requester = "agent:main:main";
+    const delivered = makeRun("run-a", requester, {
+      execution: { status: "terminal", endedAt: 2_000 },
+      delivery: { status: "delivered" },
+    });
+    const runs = runsMap(delivered);
+
+    const result = recordSubagentWaitClaimInRuns({
+      requesterSessionKey: requester,
+      requesterTurnRunId: "run-requester",
+      now: NOW,
+      runs,
+      persistOrThrow: vi.fn(),
+    });
+
+    expect(result.awaitedRunIds).toEqual(["run-a"]);
+    expect(resolveSubagentWaitClaim({ requesterSessionKey: requester, runs })).toEqual({
+      status: "satisfied",
+      claim: delivered.waitClaim,
+    });
+  });
+
   it("skips collector, suppressed, and cleaned-up rows and persists nothing when nothing is awaited", () => {
     const requester = "agent:main:main";
     const collector = makeRun("run-collect", requester, { collect: true });
