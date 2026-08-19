@@ -68,7 +68,6 @@ describe("resolveSubagentRequesterAgentId", () => {
     expect(
       markRequesterTurnYieldedInRuns({
         requesterSessionKey: "global",
-        requesterAgentId: "ops",
         requesterTurnRunId: "requester-turn",
         runs,
         persistOrThrow: () => undefined,

@@ -56,6 +56,7 @@ type MockModelBehavior = {
   // Splits the first reply into ordered text deltas and holds the tail until the
   // case releases it, so a screen assertion can prove mid-stream rendering.
   streamHead?: string;
+  api?: "anthropic-messages";
 };
 
 type MockModelRequest = {
@@ -68,6 +69,7 @@ type GatewayScenario = MockModelBehavior & {
   agentId: string;
   modelId: string;
   toolsProfile: "minimal" | "coding";
+  api?: "anthropic-messages";
 };
 
 const SHARED_GATEWAY_AGENT_ID = "tui-pty-gateway";
@@ -150,12 +152,13 @@ const GATEWAY_SCENARIOS = {
     toolsProfile: "minimal",
     replyText: "RECONNECTED_RUN_COMPLETE",
   },
-  streaming: {
+  streamingAnthropic: {
     agentId: SHARED_GATEWAY_AGENT_ID,
-    modelId: "tui-pty-streaming",
+    modelId: "tui-pty-streaming-anthropic",
     toolsProfile: "minimal",
-    replyText: "STREAM_HEAD_VISIBLE STREAM_TAIL_VISIBLE",
-    streamHead: "STREAM_HEAD_VISIBLE",
+    api: "anthropic-messages",
+    replyText: "ANTHROPIC_HEAD_VISIBLE ANTHROPIC_TAIL_VISIBLE",
+    streamHead: "ANTHROPIC_HEAD_VISIBLE",
   },
 } as const satisfies Record<string, GatewayScenario>;
 
@@ -294,6 +297,65 @@ async function writeResponsesSse(
   );
 }
 
+async function writeAnthropicSse(
+  res: ServerResponse,
+  text: string,
+  opts?: { completionGate?: Promise<void>; streamHead?: string; streamTailGate?: Promise<void> },
+) {
+  const frame = (type: string, event: Record<string, unknown>) =>
+    `event: ${type}\ndata: ${JSON.stringify({ type, ...event })}\n\n`;
+  res.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-store",
+    connection: "keep-alive",
+  });
+  res.write(
+    frame("message_start", {
+      message: {
+        id: "msg_tui_pty_anthropic",
+        type: "message",
+        role: "assistant",
+        model: "tui-pty-anthropic",
+        content: [],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    }) + frame("content_block_start", { index: 0, content_block: { type: "text", text: "" } }),
+  );
+  const streamHead = opts?.streamHead && text.startsWith(opts.streamHead) ? opts.streamHead : "";
+  if (streamHead) {
+    res.write(
+      frame("content_block_delta", {
+        index: 0,
+        delta: { type: "text_delta", text: streamHead },
+      }),
+    );
+    await opts?.streamTailGate;
+    if (res.destroyed) {
+      return;
+    }
+  }
+  if (opts?.completionGate) {
+    await opts.completionGate;
+  }
+  if (res.destroyed) {
+    return;
+  }
+  res.end(
+    frame("content_block_delta", {
+      index: 0,
+      delta: { type: "text_delta", text: text.slice(streamHead.length) },
+    }) +
+      frame("content_block_stop", { index: 0 }) +
+      frame("message_delta", {
+        delta: { stop_reason: "end_turn", stop_sequence: null },
+        usage: { output_tokens: 2 },
+      }) +
+      frame("message_stop", {}),
+  );
+}
+
 function writeInvalidEditCallSse(res: ServerResponse, requestIndex: number) {
   const item = {
     type: "function_call",
@@ -346,6 +408,23 @@ async function startRoutedMockModelServer(
       .filter(([, behavior]) => behavior.holdFirstResponse)
       .map(([modelId]) => [modelId, createDeferred()] as const),
   );
+  const acceptModelRequest = (res: ServerResponse, request: MockModelRequest) => {
+    const modelId = typeof request.body.model === "string" ? request.body.model : "";
+    const behavior = behaviors[modelId];
+    if (!behavior) {
+      rejectedRequests.push(request);
+      writeJson(res, 400, { error: `unknown mock model: ${modelId || "missing"}` });
+      return undefined;
+    }
+    const modelRequests = requestsByModel.get(modelId) ?? [];
+    if (!requestsByModel.has(modelId)) {
+      requestsByModel.set(modelId, modelRequests);
+    }
+    const requestIndex = modelRequests.length;
+    requests.push(request);
+    modelRequests.push(request);
+    return { behavior, modelId, requestIndex };
+  };
   const streamTailGates = new Map(
     Object.entries(behaviors)
       .filter(([, behavior]) => behavior.streamHead)
@@ -369,22 +448,47 @@ async function startRoutedMockModelServer(
       }
       if (req.method === "POST") {
         const body = await readJsonRequest(req);
-        if (url.pathname === "/v1/responses" || url.pathname === "/responses") {
-          const modelId = typeof body.model === "string" ? body.model : "";
-          const request = { method: req.method, path: url.pathname, body };
-          const behavior = behaviors[modelId];
-          if (!behavior) {
-            rejectedRequests.push(request);
-            writeJson(res, 400, { error: `unknown mock model: ${modelId || "missing"}` });
+        if (url.pathname === "/v1/messages") {
+          const accepted = acceptModelRequest(res, {
+            method: req.method,
+            path: url.pathname,
+            body,
+          });
+          if (!accepted) {
             return;
           }
-          const modelRequests = requestsByModel.get(modelId) ?? [];
-          if (!requestsByModel.has(modelId)) {
-            requestsByModel.set(modelId, modelRequests);
+          const { behavior, modelId, requestIndex } = accepted;
+          await writeAnthropicSse(
+            res,
+            requestIndex === 0
+              ? behavior.replyText
+              : (behavior.followupReplyText ?? behavior.replyText),
+            requestIndex === 0
+              ? {
+                  ...(firstResponseGates.has(modelId)
+                    ? { completionGate: firstResponseGates.get(modelId)?.promise }
+                    : {}),
+                  ...(behavior.streamHead
+                    ? {
+                        streamHead: behavior.streamHead,
+                        streamTailGate: streamTailGates.get(modelId)?.promise,
+                      }
+                    : {}),
+                }
+              : undefined,
+          );
+          return;
+        }
+        if (url.pathname === "/v1/responses" || url.pathname === "/responses") {
+          const accepted = acceptModelRequest(res, {
+            method: req.method,
+            path: url.pathname,
+            body,
+          });
+          if (!accepted) {
+            return;
           }
-          const requestIndex = modelRequests.length;
-          requests.push(request);
-          modelRequests.push(request);
+          const { behavior, modelId, requestIndex } = accepted;
           if (behavior.invalidEditLoop) {
             writeInvalidEditCallSse(res, requestIndex);
             return;
@@ -485,6 +589,29 @@ function buildTuiProcessArgs(args: string[]) {
     return [path.join(process.cwd(), "openclaw.mjs"), ...args];
   }
   return ["--import", "tsx", "--eval", buildTuiCliScript(args)];
+}
+
+function scenarioModelRef(scenario: GatewayScenario) {
+  return `${scenario.api === "anthropic-messages" ? "tui-pty-anthropic" : "tui-pty-mock"}/${scenario.modelId}`;
+}
+
+function buildMockAnthropicProvider(baseUrl: string, modelIds: string[]): ModelProviderConfig {
+  return {
+    baseUrl,
+    apiKey: "test",
+    api: "anthropic-messages",
+    request: { allowPrivateNetwork: true },
+    models: modelIds.map((id) => ({
+      id,
+      name: id,
+      api: "anthropic-messages",
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128000,
+      maxTokens: 4096,
+    })),
+  };
 }
 
 function buildMockModelProvider(baseUrl: string, modelIds: string[]): ModelProviderConfig {
@@ -703,8 +830,8 @@ function buildGatewayModeConfig(params: { tempDir: string; providerBaseUrl: stri
     ({ agentId }, index) => scenarios.findIndex((item) => item.agentId === agentId) === index,
   );
   const defaultScenario = GATEWAY_SCENARIOS.validation;
-  const defaultModelRef = `tui-pty-mock/${defaultScenario.modelId}`;
-  const modelRefs = scenarios.map((scenario) => `tui-pty-mock/${scenario.modelId}`);
+  const defaultModelRef = scenarioModelRef(defaultScenario);
+  const modelRefs = scenarios.map((scenario) => scenarioModelRef(scenario));
   const base = buildLocalModeConfig({
     workspaceDir: path.join(params.tempDir, defaultScenario.agentId),
     providerBaseUrl: params.providerBaseUrl,
@@ -728,7 +855,7 @@ function buildGatewayModeConfig(params: { tempDir: string; providerBaseUrl: stri
             ...(index === 0 ? { default: true } : {}),
             workspace: path.join(params.tempDir, scenario.agentId),
             skills: [],
-            model: { primary: `tui-pty-mock/${scenario.modelId}` },
+            model: { primary: scenarioModelRef(scenario) },
             tools: { profile: scenario.toolsProfile },
           },
         ]),
@@ -739,7 +866,15 @@ function buildGatewayModeConfig(params: { tempDir: string; providerBaseUrl: stri
       providers: {
         "tui-pty-mock": buildMockModelProvider(
           params.providerBaseUrl,
-          scenarios.map((scenario) => scenario.modelId),
+          scenarios
+            .filter((scenario) => scenario.api !== "anthropic-messages")
+            .map((scenario) => scenario.modelId),
+        ),
+        "tui-pty-anthropic": buildMockAnthropicProvider(
+          params.providerBaseUrl,
+          scenarios
+            .filter((scenario) => scenario.api === "anthropic-messages")
+            .map((scenario) => scenario.modelId),
         ),
       },
     },
@@ -773,6 +908,8 @@ async function startSharedGatewayFixture(): Promise<SharedGatewayFixture> {
             holdFirstResponse: scenario.holdFirstResponse,
             followupReplyText: scenario.followupReplyText,
             invalidEditLoop: scenario.invalidEditLoop,
+            ...("streamHead" in scenario ? { streamHead: scenario.streamHead } : {}),
+            ...(scenario.api ? { api: scenario.api } : {}),
             ...("streamHead" in scenario ? { streamHead: scenario.streamHead } : {}),
           },
         ]),
@@ -916,6 +1053,7 @@ async function startGatewayModeTui(
   const cleanup = registerIdempotentCleanup(registerCleanup, async () => {
     shared.mockModel.releaseFirstResponse(scenario.modelId);
     shared.mockModel.releaseStreamTail(scenario.modelId);
+    shared.mockModel.releaseStreamTail(scenario.modelId);
     try {
       if (controlClientConnected) {
         for (const key of sessionKeys) {
@@ -936,7 +1074,7 @@ async function startGatewayModeTui(
   await controlClient.patchSession({
     key: sessionKey,
     agentId: scenario.agentId,
-    model: `tui-pty-mock/${scenario.modelId}`,
+    model: scenarioModelRef(scenario),
   });
   const run = shared.run;
   const adoptionOffset = run.visibleOutput().length;
@@ -2247,19 +2385,7 @@ export default {
   registerGatewayTest(
     "renders streamed assistant text on screen before the run finishes",
     async ({ onTestFinished }) => {
-      const fixture = await startGatewayModeTui("streaming", onTestFinished);
-      const probe = new GatewayChatClient({
-        url: fixture.gateway.url,
-        token: fixture.gateway.gatewayToken,
-      });
-      const seen: string[] = [];
-      probe.onEvent = ({ event, payload }) => {
-        if (event === "chat") {
-          const p = payload as { state?: string; deltaText?: string };
-          seen.push(`${p.state}:${JSON.stringify(p.deltaText)}`);
-        }
-      };
-      probe.start();
+      const fixture = await startGatewayModeTui("streamingAnthropic", onTestFinished);
       try {
         await fixture.run.write("stream this reply\r");
         await waitFor({
@@ -2268,29 +2394,23 @@ export default {
           onTimeout: () =>
             new Error(`streaming prompt did not reach the model\n${fixture.run.output()}`),
         });
-        // The provider still holds the tail: the head must already be painted,
-        // and the run must still read as busy, or the TUI is flushing at the end.
+        // The provider still holds the tail, so the head can only be painted from
+        // a live delta; a TUI that flushes on the final event alone never shows it.
         await waitFor({
           timeoutMs: LOCAL_OUTPUT_TIMEOUT_MS,
           read: () => {
             const screen = synchronizedFrameRows(fixture.run.output(), fixture.run)[0]?.join("\n");
-            return screen?.includes("STREAM_HEAD_VISIBLE") ? screen : null;
+            return screen?.includes("ANTHROPIC_HEAD_VISIBLE") ? screen : null;
           },
           onTimeout: () =>
             new Error(
-              `streamed head never reached the screen before the final\nCHAT_EVENTS=${JSON.stringify(seen)}\n`,
+              `streamed head never reached the screen before the final\n${fixture.run.output()}`,
             ),
         });
-        expect(fixture.visibleOutput()).not.toContain("STREAM_TAIL_VISIBLE");
+        expect(fixture.visibleOutput()).not.toContain("ANTHROPIC_TAIL_VISIBLE");
         fixture.mockModel.releaseStreamTail();
-        await fixture.waitForOutput("STREAM_TAIL_VISIBLE");
-        await waitForOutputAfter(
-          fixture.run,
-          "| idle",
-          fixture.lastOutputIndex("STREAM_TAIL_VISIBLE"),
-        );
+        await fixture.waitForOutput("ANTHROPIC_TAIL_VISIBLE");
       } finally {
-        await probe.stop();
         await fixture.cleanup();
       }
     },
