@@ -146,7 +146,16 @@ Model-context budget: the system-prompt addition is static and bounded at 414 ch
 - `node --import tsx scripts/generate-prompt-snapshots.ts --check` → current.
 - `pnpm tsgo` clean; `oxfmt --check` clean on touched files;
   `pnpm check:import-cycles` → 0 runtime value cycles.
-- Full-suite result recorded in the commit/PR notes.
+- **Full suite** (`pnpm test`, 23 shards): 5931 passed, 1 failed. The single failure is
+  `src/gateway/portals/portal-http-proxy.test.ts` → "reaches IPv6-only targets through
+  the localhost dual-stack dial" (502 "Waiting for the app" instead of 200). Unrelated
+  subsystem, untouched by this diff, and it reproduces in isolation on the settled tree.
+  See follow-up 2.
+- Two failures seen _during_ the full run resolved and now pass in isolation:
+  `src/tui/tui-pty-harness.e2e.test.ts` (63 passed) — phantom, caused by the concurrent
+  TUI worker committing `df1d9a8312d` mid-run, exactly the hazard AGENTS.md warns about;
+  and `src/auto-reply/reply/commands-status.test.ts`, which passes in the batch run but
+  fails in isolation (see follow-up 3).
 
 Not done: live Matrix proof. The task scoped this to source investigation validated via
 the test suite, explicitly excluding the running gateway, so the model-visible ordering
@@ -160,18 +169,23 @@ than against a live room. That is the one real gap in this evidence.
    behavior keys on this, James is being treated as an untrusted participant on his own
    agent. Separate owner-identity/config question, unrelated to this diff — but it is a
    real finding and should not be lost.
-2. **Pre-existing red test on this branch**, unrelated to this diff and confirmed to
-   fail with my changes stashed:
-   `src/auto-reply/reply/commands-status.test.ts` → "loads Codex synthetic usage when no
-   local OpenAI profile label exists". Untouched by me, different subsystem (auth profile
-   labels). The branch is 23 commits behind `origin/main`; this looks like stale-branch
-   drift that a rebase resolves. I did not rebase: other workers are actively on this
-   checkout and the task forbids disturbing their in-flight work.
-3. **Two ratchet violations pre-existing on this branch**
+2. **`portal-http-proxy` IPv6 dual-stack dial is red** and is the only real full-suite
+   failure. `::1/128` is present on `lo`, so this is not simply "no IPv6 on the host" —
+   the proxy returns its 502 "Waiting for the app" placeholder instead of reaching the
+   v6-only listener. Introduced with the portals feature (`cc2fc55f9b4`), untouched by
+   this diff, and in a subsystem I did not read. Worth a real look; I did not widen scope
+   into it from a security fix.
+3. **`commands-status.test.ts` is order-dependent.** "loads Codex synthetic usage when no
+   local OpenAI profile label exists" **fails in isolation but passes inside the full
+   run** — the opposite of the usual direction, so it is shared-state dependent, not
+   simply stale. Confirmed unrelated: it fails identically with my production diff
+   stashed. Different subsystem (auth profile labels). Per the Tests doctrine this wants
+   a proper shared-state fix rather than a re-run.
+4. **Two ratchet violations pre-existing on this branch**
    (`scripts/check-assertion-safety-ratchet.mts`): `src/audit/execution-identity-admission.ts`
    (3 > 2) and `ui/src/pages/chat/components/chat-task-suggestions.ts` (1 > 0). Neither
    file is in my diff.
-4. **Consider whether the tail carrier should be structurally distinguishable** rather
+5. **Consider whether the tail carrier should be structurally distinguishable** rather
    than relying on prompt text. A system-role or provider-native metadata channel would
    remove the need for the model to authenticate a user-role block against a system
    declaration at all. Larger design question; the prompt-contract fix is the correct
@@ -181,4 +195,7 @@ than against a live room. That is the one real gap in this evidence.
 
 `packages/gateway-client/src/session-projection.ts` (duplication WIP) and all
 `src/tui/*` changes (concurrent TUI "stuck running" effort) were not read for edit,
-not reverted, and are not in my commits.
+not reverted, and are not in my commits. That worker landed `df1d9a8312d`,
+`55f74a8380f` and `7a59862adc1` while this investigation was running and pushed the
+branch; my two commits (`b065bc3d39a`, `6442b7a4f18`) sit below theirs and are on
+`origin/wait-claim-ledger`.
