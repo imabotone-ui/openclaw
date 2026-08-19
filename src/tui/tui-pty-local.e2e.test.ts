@@ -44,6 +44,7 @@ type MockModelServer = {
   rejectedRequests: () => MockModelRequest[];
   allowValidResponses: (modelId: string) => void;
   releaseFirstResponse: (modelId: string) => void;
+  releaseStreamTail: (modelId: string) => void;
   stop: () => Promise<void>;
 };
 
@@ -52,6 +53,9 @@ type MockModelBehavior = {
   holdFirstResponse?: boolean;
   followupReplyText?: string;
   invalidEditLoop?: boolean;
+  // Splits the first reply into ordered text deltas and holds the tail until the
+  // case releases it, so a screen assertion can prove mid-stream rendering.
+  streamHead?: string;
 };
 
 type MockModelRequest = {
@@ -146,6 +150,13 @@ const GATEWAY_SCENARIOS = {
     toolsProfile: "minimal",
     replyText: "RECONNECTED_RUN_COMPLETE",
   },
+  streaming: {
+    agentId: SHARED_GATEWAY_AGENT_ID,
+    modelId: "tui-pty-streaming",
+    toolsProfile: "minimal",
+    replyText: "STREAM_HEAD_VISIBLE STREAM_TAIL_VISIBLE",
+    streamHead: "STREAM_HEAD_VISIBLE",
+  },
 } as const satisfies Record<string, GatewayScenario>;
 
 type GatewayScenarioId = keyof typeof GATEWAY_SCENARIOS;
@@ -203,21 +214,21 @@ function writeJson(res: ServerResponse, status: number, body: unknown) {
 async function writeResponsesSse(
   res: ServerResponse,
   text: string,
-  completionGate?: Promise<void>,
+  opts?: { completionGate?: Promise<void>; streamHead?: string; streamTailGate?: Promise<void> },
 ) {
   const id = "msg_tui_pty_local";
-  const events = [
-    {
-      type: "response.output_item.added",
-      item: { type: "message", id, role: "assistant", content: [], status: "in_progress" },
-    },
-    {
-      type: "response.output_text.delta",
-      item_id: id,
-      output_index: 0,
-      content_index: 0,
-      delta: text,
-    },
+  const textDelta = (delta: string) => ({
+    type: "response.output_text.delta",
+    item_id: id,
+    output_index: 0,
+    content_index: 0,
+    delta,
+  });
+  const openEvent = {
+    type: "response.output_item.added",
+    item: { type: "message", id, role: "assistant", content: [], status: "in_progress" },
+  };
+  const completionEvents = [
     {
       type: "response.output_text.done",
       item_id: id,
@@ -253,23 +264,34 @@ async function writeResponsesSse(
       },
     },
   ];
+  const frame = (event: unknown) => `data: ${JSON.stringify(event)}\n\n`;
   res.writeHead(200, {
     "content-type": "text/event-stream",
     "cache-control": "no-store",
     connection: "keep-alive",
   });
-  res.write(`data: ${JSON.stringify(events[0])}\n\n`);
-  if (completionGate) {
-    await completionGate;
+  res.write(frame(openEvent));
+  const streamHead = opts?.streamHead && text.startsWith(opts.streamHead) ? opts.streamHead : "";
+  if (streamHead) {
+    // Flush the head on its own frame, then hold the tail: the case asserts the
+    // head is on screen while the run is still streaming.
+    res.write(frame(textDelta(streamHead)));
+    await opts?.streamTailGate;
+    if (res.destroyed) {
+      return;
+    }
+  }
+  if (opts?.completionGate) {
+    await opts.completionGate;
   }
   if (res.destroyed) {
     return;
   }
-  const completionBody = `${events
-    .slice(1)
-    .map((event) => `data: ${JSON.stringify(event)}\n\n`)
-    .join("")}data: [DONE]\n\n`;
-  res.end(completionBody);
+  res.end(
+    `${frame(textDelta(text.slice(streamHead.length)))}${completionEvents
+      .map((event) => frame(event))
+      .join("")}data: [DONE]\n\n`,
+  );
 }
 
 function writeInvalidEditCallSse(res: ServerResponse, requestIndex: number) {
@@ -324,6 +346,11 @@ async function startRoutedMockModelServer(
       .filter(([, behavior]) => behavior.holdFirstResponse)
       .map(([modelId]) => [modelId, createDeferred()] as const),
   );
+  const streamTailGates = new Map(
+    Object.entries(behaviors)
+      .filter(([, behavior]) => behavior.streamHead)
+      .map(([modelId]) => [modelId, createDeferred()] as const),
+  );
   const server = createServer((req, res) => {
     void (async () => {
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
@@ -367,7 +394,19 @@ async function startRoutedMockModelServer(
             requestIndex === 0
               ? behavior.replyText
               : (behavior.followupReplyText ?? behavior.replyText),
-            requestIndex === 0 ? firstResponseGates.get(modelId)?.promise : undefined,
+            requestIndex === 0
+              ? {
+                  ...(firstResponseGates.has(modelId)
+                    ? { completionGate: firstResponseGates.get(modelId)?.promise }
+                    : {}),
+                  ...(behavior.streamHead
+                    ? {
+                        streamHead: behavior.streamHead,
+                        streamTailGate: streamTailGates.get(modelId)?.promise,
+                      }
+                    : {}),
+                }
+              : undefined,
           );
           return;
         }
@@ -399,9 +438,12 @@ async function startRoutedMockModelServer(
     releaseFirstResponse: (modelId) => {
       firstResponseGates.get(modelId)?.resolve();
     },
+    releaseStreamTail: (modelId) => {
+      streamTailGates.get(modelId)?.resolve();
+    },
     stop: async () => {
       // Never leave a held request owning the shared server during failure cleanup.
-      for (const gate of firstResponseGates.values()) {
+      for (const gate of [...firstResponseGates.values(), ...streamTailGates.values()]) {
         gate.resolve();
       }
       await new Promise<void>((resolve, reject) => {
@@ -731,6 +773,7 @@ async function startSharedGatewayFixture(): Promise<SharedGatewayFixture> {
             holdFirstResponse: scenario.holdFirstResponse,
             followupReplyText: scenario.followupReplyText,
             invalidEditLoop: scenario.invalidEditLoop,
+            ...("streamHead" in scenario ? { streamHead: scenario.streamHead } : {}),
           },
         ]),
       ),
@@ -872,6 +915,7 @@ async function startGatewayModeTui(
   // Case-local ownership prevents that late work from crossing into the next test.
   const cleanup = registerIdempotentCleanup(registerCleanup, async () => {
     shared.mockModel.releaseFirstResponse(scenario.modelId);
+    shared.mockModel.releaseStreamTail(scenario.modelId);
     try {
       if (controlClientConnected) {
         for (const key of sessionKeys) {
@@ -920,6 +964,7 @@ async function startGatewayModeTui(
       requests: () => shared.mockModel.requests(scenario.modelId).slice(requestOffset),
       rejectedRequests: () => shared.mockModel.rejectedRequests().slice(rejectedRequestOffset),
       releaseFirstResponse: () => shared.mockModel.releaseFirstResponse(scenario.modelId),
+      releaseStreamTail: () => shared.mockModel.releaseStreamTail(scenario.modelId),
     },
     agentId: scenario.agentId,
     sessionKey,
@@ -2194,6 +2239,59 @@ export default {
         } finally {
           await fixture.cleanup();
         }
+      }
+    },
+    LOCAL_TEST_TIMEOUT_MS,
+  );
+
+  registerGatewayTest(
+    "renders streamed assistant text on screen before the run finishes",
+    async ({ onTestFinished }) => {
+      const fixture = await startGatewayModeTui("streaming", onTestFinished);
+      const probe = new GatewayChatClient({
+        url: fixture.gateway.url,
+        token: fixture.gateway.gatewayToken,
+      });
+      const seen: string[] = [];
+      probe.onEvent = ({ event, payload }) => {
+        if (event === "chat") {
+          const p = payload as { state?: string; deltaText?: string };
+          seen.push(`${p.state}:${JSON.stringify(p.deltaText)}`);
+        }
+      };
+      probe.start();
+      try {
+        await fixture.run.write("stream this reply\r");
+        await waitFor({
+          timeoutMs: LOCAL_OUTPUT_TIMEOUT_MS,
+          read: () => (fixture.mockModel.requests().length === 1 ? true : null),
+          onTimeout: () =>
+            new Error(`streaming prompt did not reach the model\n${fixture.run.output()}`),
+        });
+        // The provider still holds the tail: the head must already be painted,
+        // and the run must still read as busy, or the TUI is flushing at the end.
+        await waitFor({
+          timeoutMs: LOCAL_OUTPUT_TIMEOUT_MS,
+          read: () => {
+            const screen = synchronizedFrameRows(fixture.run.output(), fixture.run)[0]?.join("\n");
+            return screen?.includes("STREAM_HEAD_VISIBLE") ? screen : null;
+          },
+          onTimeout: () =>
+            new Error(
+              `streamed head never reached the screen before the final\nCHAT_EVENTS=${JSON.stringify(seen)}\n`,
+            ),
+        });
+        expect(fixture.visibleOutput()).not.toContain("STREAM_TAIL_VISIBLE");
+        fixture.mockModel.releaseStreamTail();
+        await fixture.waitForOutput("STREAM_TAIL_VISIBLE");
+        await waitForOutputAfter(
+          fixture.run,
+          "| idle",
+          fixture.lastOutputIndex("STREAM_TAIL_VISIBLE"),
+        );
+      } finally {
+        await probe.stop();
+        await fixture.cleanup();
       }
     },
     LOCAL_TEST_TIMEOUT_MS,
