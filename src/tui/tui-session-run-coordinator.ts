@@ -324,7 +324,11 @@ export class TuiSessionRunCoordinator {
         if (historyOwned && !restoredInFlight && (result.loaded || !gapRecovery)) {
           this.context.finalizeHistoryOwnedRun({ runId, result, previouslyDisplayed });
         }
-        if (deferred && (!result.loaded || historyOwned || restoredInFlight)) {
+        // Only the rebuild's own record of what it rendered can retire a deferred
+        // terminal event. A reload that swept up a still-running turn reads history
+        // before that reply persists, so inferring coverage from reload ownership
+        // discards the sole carrier of the reply and strands the run streaming.
+        if (deferred && !(result.loaded && result.displayedAssistantRunIds.includes(runId))) {
           this.context.replayHistoryRunEvent(deferred);
         }
       }

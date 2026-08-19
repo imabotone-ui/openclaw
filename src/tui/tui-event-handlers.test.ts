@@ -178,6 +178,7 @@ describe("tui-event-handlers: handleAgentEvent", () => {
     const setActivityStatus = vi.fn();
     const loadHistory = vi.fn<() => Promise<TuiHistoryLoadResult>>(async () => ({
       loaded: true,
+      displayedAssistantRunIds: [],
       runOutcome: { state: "completed" },
     }));
     const localRunIds = new Set<string>();
@@ -277,6 +278,7 @@ describe("tui-event-handlers: handleAgentEvent", () => {
       createHandlersHarness({ state: { activeChatRunId: "run-gap" } });
     loadHistory.mockResolvedValue({
       loaded: true,
+      displayedAssistantRunIds: [],
       runOutcome: { state: "active", runId: "run-gap" },
     });
 
@@ -2332,7 +2334,7 @@ describe("tui-event-handlers: handleAgentEvent", () => {
     loadHistory.mockImplementation(async () => {
       expect(state.activeChatRunId).toBeNull();
       expect(state.activityStatus).toBe("idle");
-      return { loaded: true, runOutcome: { state: "completed" } };
+      return { loaded: true, displayedAssistantRunIds: [], runOutcome: { state: "completed" } };
     });
 
     handleChatEvent({
@@ -3215,6 +3217,7 @@ describe("tui-event-handlers: handleAgentEvent", () => {
 
       resolveFirstHistory?.({
         loaded: true,
+        displayedAssistantRunIds: [],
         runOutcome: { state: "completed" },
       });
       await vi.waitFor(() => expect(loadHistory).toHaveBeenCalledTimes(2));
@@ -3313,6 +3316,7 @@ describe("tui-event-handlers: handleAgentEvent", () => {
           loaded
             ? {
                 loaded: true,
+                displayedAssistantRunIds: [],
                 runOutcome: inFlightRunId
                   ? { state: "active", runId: inFlightRunId }
                   : { state: "completed" },
@@ -3496,6 +3500,7 @@ describe("tui-event-handlers: handleAgentEvent", () => {
         return {
           loaded: true as const,
           runOutcome: { state: "active" as const, runId: "run-reset" },
+          displayedAssistantRunIds: [],
         };
       });
 
@@ -3565,6 +3570,84 @@ describe("tui-event-handlers: handleAgentEvent", () => {
       expect(chatLog.finalizeAssistant).not.toHaveBeenCalled();
       expect(state.activeChatRunId).toBeNull();
     });
+  });
+
+  it("renders a reply whose final arrived while an unowned history reload was in flight", async () => {
+    const { state, chatLog, loadHistory, handleChatEvent, handleSessionsChangedEvent } =
+      createHandlersHarness({ state: { activeChatRunId: "run-A" } });
+    let resolveHistory: ((result: TuiHistoryLoadResult) => void) | undefined;
+    loadHistory.mockImplementation(
+      () =>
+        new Promise<TuiHistoryLoadResult>((resolve) => {
+          resolveHistory = resolve;
+        }),
+    );
+
+    handleChatEvent({
+      runId: "run-A",
+      state: "delta",
+      seq: 1,
+      message: { content: [{ type: "text", text: "thinking" }] },
+    });
+    // A session reset sweeps the still-running turn into a reload it cannot own.
+    handleSessionsChangedEvent({ reason: "reset" });
+    await vi.waitFor(() => expect(loadHistory).toHaveBeenCalledTimes(1));
+
+    handleChatEvent({
+      runId: "run-A",
+      state: "final",
+      seq: 2,
+      message: { content: [{ type: "text", text: "the answer" }] },
+    });
+    // History was read before the reply persisted, so it displays no run-A reply.
+    resolveHistory?.({
+      loaded: true,
+      runOutcome: { state: "completed" },
+      displayedAssistantRunIds: [],
+    });
+
+    await vi.waitFor(() =>
+      expect(chatLog.finalizeAssistant).toHaveBeenCalledWith("the answer", "run-A"),
+    );
+    expect(state.activeChatRunId).toBeNull();
+  });
+
+  it("drops a deferred final the reloaded history already displayed for that run", async () => {
+    const { chatLog, loadHistory, handleChatEvent, handleSessionsChangedEvent } =
+      createHandlersHarness({ state: { activeChatRunId: "run-B" } });
+    let resolveHistory: ((result: TuiHistoryLoadResult) => void) | undefined;
+    loadHistory.mockImplementation(
+      () =>
+        new Promise<TuiHistoryLoadResult>((resolve) => {
+          resolveHistory = resolve;
+        }),
+    );
+
+    handleChatEvent({
+      runId: "run-B",
+      state: "delta",
+      seq: 1,
+      message: { content: [{ type: "text", text: "thinking" }] },
+    });
+    handleSessionsChangedEvent({ reason: "reset" });
+    await vi.waitFor(() => expect(loadHistory).toHaveBeenCalledTimes(1));
+
+    handleChatEvent({
+      runId: "run-B",
+      state: "final",
+      seq: 2,
+      message: { content: [{ type: "text", text: "the answer" }] },
+    });
+    resolveHistory?.({
+      loaded: true,
+      runOutcome: { state: "completed" },
+      displayedAssistantRunIds: ["run-B"],
+    });
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 10);
+    });
+    expect(chatLog.finalizeAssistant).not.toHaveBeenCalled();
   });
 });
 

@@ -37,7 +37,10 @@ export type TuiHistoryRunOutcome =
   | { state: "failed"; errorMessage: string };
 
 export type TuiHistoryLoadResult =
-  | { loaded: true; runOutcome: TuiHistoryRunOutcome }
+  // displayedAssistantRunIds records which runs this rebuild actually rendered a
+  // reply for. Deferred terminal events are replayed unless it names their run;
+  // without the fact a still-unpersisted reply is dropped and never displayed.
+  | { loaded: true; runOutcome: TuiHistoryRunOutcome; displayedAssistantRunIds: readonly string[] }
   | { loaded: false };
 
 export type ChatEvent = {

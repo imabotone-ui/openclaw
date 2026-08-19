@@ -493,6 +493,7 @@ export function createSessionActions(context: SessionActionContext) {
       chatLog.clearAll();
       btw.clear();
       chatLog.addSystem(`session ${state.currentSessionKey}`);
+      const displayedAssistantRunIds: string[] = [];
       for (const entry of projection.entries) {
         const message = entry.message as Record<string, unknown>;
         if (isCommandMarkedMessage(message)) {
@@ -527,6 +528,9 @@ export function createSessionActions(context: SessionActionContext) {
           });
           if (text) {
             chatLog.finalizeAssistant(text);
+            if (entry.identity?.runId) {
+              displayedAssistantRunIds.push(entry.identity.runId);
+            }
           }
           continue;
         }
@@ -587,7 +591,7 @@ export function createSessionActions(context: SessionActionContext) {
           : status === "killed" || sessionInfo?.abortedLastRun === true
             ? ({ state: "interrupted" } as const)
             : ({ state: "completed" } as const);
-      return { loaded: true, runOutcome };
+      return { loaded: true, runOutcome, displayedAssistantRunIds };
     } catch (err) {
       if (!isCurrentLoad()) {
         return { loaded: false };
