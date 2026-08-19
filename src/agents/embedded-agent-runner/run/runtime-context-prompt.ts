@@ -2,6 +2,7 @@
  * Builds runtime context prompt fragments and custom session messages.
  */
 import {
+  escapeInternalRuntimeContextDelimiters,
   extractInternalRuntimeContext,
   INTERNAL_RUNTIME_CONTEXT_BEGIN,
   INTERNAL_RUNTIME_CONTEXT_END,
@@ -251,6 +252,13 @@ function buildRuntimeContextMessageContent(params: {
   // Wrap the runtime context body in delimited internal-context markers so
   // stripInternalRuntimeContext can fully remove the block when it leaks
   // into user-visible surfaces (e.g. Feishu streaming cards, #92589).
+  //
+  // The body carries attacker-controlled inbound context (sender names, group
+  // subjects, quoted messages, chat history), so it must be escaped like every
+  // other delimited-block producer. An unescaped END marker inside that text
+  // terminates the block early, leaving the remainder outside the protected
+  // span: it survives stripInternalRuntimeContext on echo, and on the wire it
+  // reads as runtime-owned context in the tail carrier.
   return [
     params.kind === "runtime-event"
       ? OPENCLAW_RUNTIME_EVENT_HEADER
@@ -258,7 +266,7 @@ function buildRuntimeContextMessageContent(params: {
     OPENCLAW_RUNTIME_CONTEXT_NOTICE,
     "",
     INTERNAL_RUNTIME_CONTEXT_BEGIN,
-    params.runtimeContext,
+    escapeInternalRuntimeContextDelimiters(params.runtimeContext),
     INTERNAL_RUNTIME_CONTEXT_END,
   ].join("\n");
 }
