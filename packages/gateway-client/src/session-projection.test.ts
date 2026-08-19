@@ -224,6 +224,29 @@ describe("session transcript projection", () => {
     ).toEqual([first, second, synthetic]);
   });
 
+  it("does not replay a streamed final the snapshot already represents in the same run", () => {
+    // A run owns several messages, so promotion by runId alone matches every row
+    // in it. Re-inserting there replays the whole run as a duplicate block.
+    const streamed = createMessage("assistant", "second final", {
+      idempotencyKey: "final-run",
+    });
+    const first = createMessage("assistant", "first final", {
+      id: "assistant-first",
+      seq: 7,
+      idempotencyKey: "final-run",
+    });
+    const second = createMessage("assistant", "second final", {
+      id: "assistant-second",
+      seq: 8,
+      idempotencyKey: "final-run",
+    });
+    const state = projectLiveSessionMessage(createSessionProjection(primaryScope), streamed);
+
+    expect(
+      reconcileSessionProjectionSnapshot(state, [first, second], primaryScope).messages,
+    ).toEqual([first, second]);
+  });
+
   it("promotes a native sequence-only live row to its durable snapshot identity", () => {
     const live = createMessage("user", "live projection", { seq: 7 });
     const persisted = createMessage("user", "persisted projection", {
