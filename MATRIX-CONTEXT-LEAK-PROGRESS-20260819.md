@@ -199,3 +199,35 @@ not reverted, and are not in my commits. That worker landed `df1d9a8312d`,
 `55f74a8380f` and `7a59862adc1` while this investigation was running and pushed the
 branch; my two commits (`b065bc3d39a`, `6442b7a4f18`) sit below theirs and are on
 `origin/wait-claim-ledger`.
+
+## Follow-up note (added 2026-08-19, post-deploy, via James)
+
+James's synthesis across both defects here, plus the upstream issue cluster found afterward
+(#93966, #104602, #110190, #116754 - all open, all unfixed upstream): the underlying problem is
+that **message routing/delivery-plumbing concerns are bleeding into message context/session
+identification concerns**. Concretely:
+
+- The runtime-context carrier's _trustworthiness_ is currently established purely by its
+  _position_ in the wire request (tail placement, chosen for prompt-cache economics - a routing/
+  transport concern) plus a _prompt-text declaration_ the model must read and choose to believe
+  (a context/identification concern bolted onto a routing mechanism).
+- Nothing structurally ties the carrier to the specific request/session it belongs to. There is
+  no first-class signal - no UID, no session-scoped correlation, no provider-native metadata
+  channel - that lets the system (or the model) verify "this carrier genuinely belongs to this
+  turn, from this trusted origin" independent of trusting the prompt text itself.
+- This is exactly why the class of bug recurs across channels (Feishu #90684, Matrix
+  today, WeChat/openclaw-weixin #116754, general #93966/#104602/#110190): the routing mechanism
+  (where/how the carrier gets inserted into the request) and the identification mechanism
+  (how the model knows to trust it) are the same mechanism, with no separation of concerns.
+
+This reinforces (does not replace) follow-up #5 above ("consider whether the tail carrier should
+be structurally distinguishable"). The concrete direction discussed: a request/session-scoped
+UID or correlation token generated server-side, used to structurally verify a carrier's
+legitimacy BEFORE it ever reaches the model - moving trust verification out of "the model reads
+prompt text and decides" and into "the system verifies structurally, the model just consumes
+pre-validated context." This is a genuine architectural fix, not a per-instance patch, and would
+likely close the entire cluster of related upstream issues at once rather than requiring a
+separate patch per channel/symptom as they're discovered.
+
+Deliberately NOT implemented as part of today's fix - scoped out, larger design effort, tracked
+for future work.
