@@ -144,3 +144,100 @@ terminal rather than more source reading:
 `src/tui/tui-pty-harness.e2e.test.ts -t "authenticates a streamed prefix"`:
 1 passed. No production or test files were changed by this investigation, so no
 broader suite run was warranted.
+
+---
+
+## Addendum — full-chain proof and committed regression test (2026-08-19, later)
+
+The three legs above were each proven in isolation. This addendum closes the
+remaining gap: the legs were never proven _joined_ on the transport the operator
+actually runs. Commit `4c3bdeb087b`.
+
+### What was missing
+
+Every Gateway case in `src/tui/tui-pty-local.e2e.test.ts` answered on the
+OpenAI Responses mock, and that mock emitted its whole reply in a single
+`response.output_text.delta`. A TUI that painted only on the final event would
+still have passed every one of them. The PTY streaming proof cited above
+(`tui-pty-harness.e2e.test.ts:834`) injects chat payloads directly into the TUI
+backend, so it covers the TUI leg but skips the runner and the Gateway.
+
+### New coverage
+
+`src/tui/tui-pty-local.e2e.test.ts` gains an Anthropic-messages lane on the
+shared real-Gateway fixture:
+
+- the mock model server answers `/v1/messages` with a real Anthropic SSE stream
+  (`message_start`, `content_block_start`, `content_block_delta`,
+  `content_block_stop`, `message_delta`, `message_stop`);
+- a behavior can split the first reply into a head delta plus a tail held behind
+  a gate (`streamHead` / `releaseStreamTail`), so the provider is still mid-reply
+  while the assertion runs;
+- the `streamingAnthropic` scenario routes through a second mock provider
+  (`tui-pty-anthropic`, `api: "anthropic-messages"`); `scenarioModelRef()` now
+  picks the provider per scenario;
+- the case submits a prompt, waits for the model request, then asserts
+  `ANTHROPIC_HEAD_VISIBLE` is present in a synchronized real-PTY frame while
+  `ANTHROPIC_TAIL_VISIBLE` is still absent, then releases the tail.
+
+Chain covered: mock provider -> embedded runner -> Gateway chat deltas -> WS ->
+TUI event handlers -> chat log -> real terminal frame.
+
+### Result
+
+Green on this HEAD. Live incremental rendering works end to end on
+`anthropic-messages`, which is the operator's primary model
+(`anthropic/claude-sonnet-5`). That upgrades the earlier verdict from "each leg
+works" to "the assembled chain works", and it makes the earlier conclusion
+actionable: the reported symptom is not in the shipped code path on this branch,
+so the next evidence must come from the operator's actual session.
+
+Negative control (test-audit gate): replacing the
+`chatLog.updateAssistant(displayText, evt.runId)` call at
+`src/tui/tui-event-handlers.ts:283` with a no-op turns the new case red at the
+mid-stream assertion (121s timeout waiting for the head), so it fails for the
+intended reason and would catch a real regression of this behavior.
+
+### Follow-up 2 above is now reproduced, not just read
+
+An OpenAI-Responses variant of the same case (mock emitting a held head delta on
+`/v1/responses`) showed the TUI screen empty for the whole 120s hold, and a WS
+probe on the Gateway recorded **no** `state: "delta"` chat frames and **no**
+`stream: "assistant"` agent events for the run — only `run_status`. So the live
+text is lost upstream of the Gateway on that transport.
+
+Attempted narrow fix — deleting the `isPhasePendingResponsesTextItem` early
+return in `embedded-agent-subscribe.handlers.messages.update.ts` and moving that
+flag into the block-reply suppression condition (matching how the Anthropic and
+completions pending flags behave) — makes the handler emit live events at unit
+level, but did **not** change the end-to-end result: still no assistant events at
+all. That means the Responses live-text gap is deeper than the phase gate, or the
+hand-written Responses SSE mock is not faithful enough to drive incremental
+`message_update` events (it may need `sequence_number`, `content_part` and item
+bookkeeping the SDK parser expects). Both possibilities are unresolved, so the
+production change was reverted and the Responses lane was **not** committed: an
+unproven fix and a red test are both worse than a recorded open question.
+
+Open question for follow-up 2, restated precisely: does an
+`api: "openai-responses"` model deliver live assistant text inside a text block,
+or only at `text_end`? Settling it needs either a faithful Responses SSE fixture
+at the `packages/ai` transport boundary or one live GPT-family run.
+
+### Unrelated repair carried in the same commit
+
+`src/agents/subagent-requester-owner.test.ts` passed a `requesterAgentId`
+argument that `markRequesterTurnYieldedInRuns()` no longer accepts, breaking
+`node scripts/run-tsgo-core-test-shards.mjs src` on this branch. Dropped it; the
+lane is clean again.
+
+### Validation
+
+- `src/tui/tui-pty-local.e2e.test.ts`: 23 passed / 2 skipped, twice in a row
+  (the new case flaked once on a trailing `| idle` status wait in full-file order;
+  that assertion added nothing over the tail assertion and was removed).
+- `src/tui` lane: 45 files / 1195 tests passed.
+- `node scripts/run-tsgo-core-test-shards.mjs src`: clean.
+- `node scripts/check-changed.mjs -- src/tui/tui-pty-local.e2e.test.ts`: the only
+  failure is the pre-existing assertion-SAFETY ratchet on
+  `src/audit/execution-identity-admission.ts` and
+  `ui/src/pages/chat/components/chat-task-suggestions.ts`, neither touched here.
