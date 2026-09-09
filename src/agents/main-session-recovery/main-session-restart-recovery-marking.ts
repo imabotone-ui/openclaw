@@ -243,6 +243,9 @@ export async function markStartupOrphanedMainSessionsForRecovery(params: {
   const storePaths = (await resolveRestartRecoveryStorePaths(params)).filter(
     (storePath) => !params.startupCheckedStorePaths?.has(storePath),
   );
+  // A store whose marking write fails must not suppress recovery for every other store:
+  // the caller runs recovery only after this returns, so one throw here strands all rows.
+  const markedStorePaths: string[] = [];
   for (const storePath of storePaths) {
     const storeResult = await markRecoveryStore({
       storePath,
@@ -271,11 +274,21 @@ export async function markStartupOrphanedMainSessionsForRecovery(params: {
         }
         return {};
       },
+    }).catch((err: unknown) => {
+      mainSessionRecoveryLog.warn(
+        `startup-orphan marking failed for ${storePath}: ${String(err)}; recovery continues`,
+      );
+      return undefined;
     });
+    if (!storeResult) {
+      continue;
+    }
+    markedStorePaths.push(storePath);
     result.marked += storeResult.marked;
     result.skipped += storeResult.skipped;
   }
-  storePaths.forEach((storePath) => params.startupCheckedStorePaths?.add(storePath));
+  // Only successfully scanned paths are recorded, so a failed store retries on the next pass.
+  markedStorePaths.forEach((storePath) => params.startupCheckedStorePaths?.add(storePath));
 
   if (result.marked > 0) {
     mainSessionRecoveryLog.warn(

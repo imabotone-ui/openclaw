@@ -5,6 +5,7 @@ import {
 } from "../../state/openclaw-agent-db.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import {
+  applySessionEntryReplacements,
   deleteSessionEntryLifecycle,
   listSessionParticipantsReadOnly,
   loadSessionEntry,
@@ -155,6 +156,46 @@ describe("SQLite session participants", () => {
         archiveTranscript: false,
       });
       expect(listSessionParticipantsReadOnly(scope).get(sessionKey)).toBeUndefined();
+    });
+  });
+
+  // Regression: the whole-store snapshot read skipped the participant projection the
+  // in-transaction revalidation read applies, so unfiltered bulk replacements (group
+  // category rename) failed permanently on any session with a non-owner participant.
+  it("replaces entries in the unfiltered whole-store projection when non-owner participants exist", async () => {
+    await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
+      const sessionKey = "agent:main:bulk-participants";
+      const scope = { agentId: "main", env: state.env, sessionKey };
+      await upsertSessionEntryCore(scope, {
+        sessionId: "session-bulk-participants",
+        updatedAt: 1,
+        category: "before",
+        createdActor: { type: "human", id: "profile-owner" },
+      });
+      expect(
+        recordSessionParticipant(scope, {
+          actor: { type: "human", id: "profile-other" },
+          promptedAt: 2,
+          source: "profile",
+        }),
+      ).toBe("inserted");
+      const storePath = openOpenClawAgentDatabase({ agentId: "main", env: state.env }).path;
+
+      await expect(
+        applySessionEntryReplacements<number>({
+          agentId: "main",
+          storePath,
+          update: (entries) => {
+            const replacements = entries.flatMap(({ sessionKey: key, entry }) =>
+              entry.category === "before"
+                ? [{ sessionKey: key, entry: { ...entry, category: "after" } }]
+                : [],
+            );
+            return { replacements, result: replacements.length };
+          },
+        }),
+      ).resolves.toBe(1);
+      expect(loadSessionEntry(scope)?.category).toBe("after");
     });
   });
 });

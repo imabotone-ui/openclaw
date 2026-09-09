@@ -9,6 +9,7 @@ import {
   projectSqliteSessionOwner,
   type SqliteSessionOwnerRow,
 } from "./session-accessor.sqlite-owner-projection.js";
+import { projectSqliteSessionParticipantsBatch } from "./session-accessor.sqlite-participant-projection.js";
 import {
   hasValidSessionEntryIdentity,
   parseSqliteSessionEntryRecord,
@@ -59,10 +60,17 @@ export function readSessionEntriesByStatus(
   if (selectedSessionKeys) {
     query = query.where("session_key", "in", selectedSessionKeys);
   }
-  return executeSqliteQuerySync(database.db, query)
-    .rows.flatMap((row) => {
+  // Multi-row snapshots must project participants exactly like the exact-row read
+  // (parseReadableSqliteSessionEntryRow), because optimistic-concurrency revalidation
+  // compares whole entries. A field-allowlist comparison would only re-diverge the next
+  // time one path grows a projection the other lacks.
+  const parsed = new Map(
+    executeSqliteQuerySync(database.db, query).rows.flatMap((row) => {
       const entry = parseSessionEntryJson(row);
-      return entry ? [{ entry, sessionKey: row.session_key }] : [];
-    })
+      return entry ? ([[row.session_key, entry]] as const) : [];
+    }),
+  );
+  return [...projectSqliteSessionParticipantsBatch(database.db, parsed)]
+    .map(([sessionKey, entry]) => ({ entry, sessionKey }))
     .toSorted((a, b) => a.sessionKey.localeCompare(b.sessionKey));
 }

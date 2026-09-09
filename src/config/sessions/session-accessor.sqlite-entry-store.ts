@@ -31,7 +31,10 @@ import {
   projectSqliteSessionOwner,
   type SqliteSessionOwnerRow,
 } from "./session-accessor.sqlite-owner-projection.js";
-import { projectSqliteSessionParticipants } from "./session-accessor.sqlite-participant-projection.js";
+import {
+  projectSqliteSessionParticipants,
+  projectSqliteSessionParticipantsBatch,
+} from "./session-accessor.sqlite-participant-projection.js";
 import { resolveSessionEntryProvenanceRow } from "./session-accessor.sqlite-provenance.js";
 import { collectSessionStateIdsForEntry } from "./session-accessor.sqlite-references.js";
 import {
@@ -267,16 +270,18 @@ export function readSessionEntryStore(
       .select(["current_session_id", "entry_json", "session_key", "updated_at"])
       .orderBy("session_key"),
   ).rows;
-  const store: Record<string, SessionEntry> = {};
+  const parsed = new Map<string, SessionEntry>();
   for (const row of rows) {
     // Doctor lifecycle projection supplies its separately hydrated expected entry for rejected
     // raw rows; ordinary exact reads still fail loud before a write can replace one.
     const entry = parseSessionEntryRow(row);
     if (entry) {
-      store[row.session_key] = entry;
+      parsed.set(row.session_key, entry);
     }
   }
-  return store;
+  // Same shared participant projection the exact-row read applies; whole-store snapshots feed
+  // whole-entry revalidation, so any projection gap here fails every write deterministically.
+  return Object.fromEntries(projectSqliteSessionParticipantsBatch(database.db, parsed));
 }
 
 export function readSessionEntryCount(database: OpenClawAgentDatabase): number {
