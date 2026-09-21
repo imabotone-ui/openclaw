@@ -235,6 +235,26 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
       requesterAgentId,
     );
 
+  const isCronRequester = isCronSessionKey(requesterSessionKey);
+  // A cron requester owns no durable turn to wake unless it left a wait claim
+  // behind. With no claim at all, keep the pre-ledger contract and complete the
+  // batch here, ahead of the descendant-drain gate below: that gate exists to
+  // hold back a premature *wake*, and there is no wake to hold back. Deferring
+  // a zero-delivery cron batch behind a still-draining sibling would strand a
+  // retire-after-settle row in the registry forever. A pending claim still
+  // defers further down — that requester really is waiting.
+  if (
+    isCronRequester &&
+    resolveSubagentWaitClaim({
+      requesterSessionKey,
+      runs: new Map(requesterRuns.map((entry) => [entry.runId, entry])),
+    }).status === "no_claim"
+  ) {
+    completeBatch([params.settledEntry], currentState.rearmGeneration);
+    finalizeRequesterAttachment([params.settledEntry.runId], currentState);
+    return false;
+  }
+
   const frozenBatchRunIds = currentState.batchRunIds;
   const currentRearmGeneration = currentState.rearmGeneration;
   const hasUnsettledDescendants = requesterHasUnsettledDescendants();
@@ -345,7 +365,6 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
       ),
       batchRunIds: [...batchRunIds],
       ...(state.requesterYieldBatch === true ? { requesterYieldBatch: true } : {}),
-      ...(state.afterRequesterYield === true ? { afterRequesterYield: true } : {}),
       ...(state.rearmGeneration !== undefined ? { rearmGeneration: state.rearmGeneration } : {}),
       ...(state.lastError !== undefined ? { lastError: state.lastError } : {}),
       deferralCount,
@@ -390,7 +409,6 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
     return false;
   }
   const claimSatisfied = claimResolution.status === "satisfied";
-  const isCronRequester = isCronSessionKey(requesterSessionKey);
   const isNestedRequester = !isCronRequester && requesterDepth >= 1;
   if (!claimSatisfied) {
     // no_claim: the requester never yielded awaiting these children — claims

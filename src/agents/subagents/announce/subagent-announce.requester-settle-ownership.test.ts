@@ -121,6 +121,12 @@ it("closes the frozen requester obligation when reset suppresses an unfinished m
 it("leaves a rearmed yielded batch intact when an older queued wake loses authority", async () => {
   const child = makeSettledChild({
     runId: "run-b",
+    waitClaim: {
+      requesterSessionKey: REQUESTER,
+      awaitedRunIds: ["run-b"],
+      claimedAt: 5_000,
+      requireVisibleReply: true,
+    },
     requesterSettleWake: {
       status: "pending",
       attemptCount: 0,

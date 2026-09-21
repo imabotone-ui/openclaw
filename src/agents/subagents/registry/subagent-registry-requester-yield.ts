@@ -1,3 +1,4 @@
+import { isCronSessionKey } from "../../../sessions/session-key-utils.js";
 import { scheduleYieldedSubagentRunProgress } from "../../../tasks/task-registry-progress.js";
 /** Settles durable child ownership when the spawning requester turn ends. */
 import type { AcceptedSessionSpawn } from "../../accepted-session-spawn.js";
@@ -6,9 +7,14 @@ import {
   promoteRequesterCronAuthority,
 } from "../requester-cron-authority.js";
 import { promoteRequesterFinalAttachment } from "../requester-final-attachment.js";
+import { getSubagentDepthFromSessionStore } from "../spawn/subagent-depth.js";
 import { markSubagentRunPausedAfterYield } from "./subagent-registry-run-pause.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
 import { compareSubagentRunGeneration } from "./subagent-run-generation.js";
+import {
+  applySubagentWaitClaimMutation,
+  rollbackSubagentWaitClaimMutation,
+} from "./subagent-wait-claim.js";
 
 export type RequesterTurnYieldedMutation = {
   entries: SubagentRunRecord[];
@@ -80,23 +86,48 @@ export function rollbackRequesterTurnYieldedMutation(
 /** Persists explicit yield intent before the requester run is aborted. */
 export function markRequesterTurnYieldedInRuns(params: {
   requesterSessionKey: string;
+  requesterAgentId?: string;
   requesterTurnRunId: string;
   runs: Map<string, SubagentRunRecord>;
   persistOrThrow(...runIds: string[]): void;
 }): number {
-  const mutation = applyRequesterTurnYieldedMutation(params);
-  if (!mutation.mutated) {
-    return mutation.markedCount;
+  // Both mutations below must land in a single persist call. Persisting the
+  // yield marker and the wait-claim stamp separately would let a crash or a
+  // throw between the two writes leave a yield-marked row with no claim —
+  // harmless while nothing reads the ledger, but indistinguishable from
+  // "never yielded" once a resolver trusts it (see BRIEF-wait-claim-ledger.md).
+  const yieldMutation = applyRequesterTurnYieldedMutation(params);
+  // Pin the visible-reply contract at claim-write time. A nested requester's
+  // final answer is its completion message to its own parent, never a
+  // user-visible reply; every other yielding requester (cron included) must
+  // end its yielded turn with a visible final answer.
+  const requesterIsNested =
+    !isCronSessionKey(params.requesterSessionKey) &&
+    getSubagentDepthFromSessionStore(params.requesterSessionKey) >= 1;
+  const claimMutation = applySubagentWaitClaimMutation({
+    ...params,
+    requireVisibleReply: !requesterIsNested,
+  });
+  if (!yieldMutation.mutated && !claimMutation.mutated) {
+    return yieldMutation.markedCount;
+  }
+  const runIdsToPersist = new Set<string>();
+  for (const entry of yieldMutation.entries) {
+    runIdsToPersist.add(entry.runId);
+  }
+  for (const entry of claimMutation.entries) {
+    runIdsToPersist.add(entry.runId);
   }
   try {
-    params.persistOrThrow(...mutation.entries.map((entry) => entry.runId));
+    params.persistOrThrow(...runIdsToPersist);
   } catch (error) {
-    mutation.cronAuthority?.revoke();
-    rollbackRequesterTurnYieldedMutation(mutation.entries, mutation.previous);
+    yieldMutation.cronAuthority?.revoke();
+    rollbackRequesterTurnYieldedMutation(yieldMutation.entries, yieldMutation.previous);
+    rollbackSubagentWaitClaimMutation(claimMutation.entries, claimMutation.previous);
     throw error;
   }
-  mutation.cronAuthority?.commit();
-  return mutation.markedCount;
+  yieldMutation.cronAuthority?.commit();
+  return yieldMutation.markedCount;
 }
 
 export function settleRequesterTurnAfterSessionSpawns(params: {

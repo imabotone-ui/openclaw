@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../../test/helpers/promise.js";
 import { getAgentEventLifecycleGeneration } from "../../../infra/agent-events.js";
 import { buildAgentRunTerminalReplySnapshot } from "../../agent-run-terminal-reply.js";
+import type { SubagentRunRecord } from "../registry/subagent-registry.types.js";
 import {
   promoteRequesterFinalAttachment,
   registerRequesterFinalAttachment,
@@ -39,9 +40,19 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
     { name: "yielded private child", mixed: false, yielded: true, single: true },
     { name: "yielded mixed pair", mixed: true, yielded: true, single: false },
   ])("keeps settled private results internal: $name", async ({ mixed, yielded, single }) => {
-    const children = (single ? ["run-b"] : ["run-a", "run-b"]).map((runId, index) =>
+    const batchRunIds = single ? ["run-b"] : ["run-a", "run-b"];
+    // Claims are turn-scoped: any yield producing this batch also wrote a claim
+    // over its awaited children, so a yielded fixture carries one on every row.
+    const claim = {
+      requesterSessionKey: REQUESTER,
+      awaitedRunIds: batchRunIds,
+      claimedAt: 5_000,
+      requireVisibleReply: true,
+    };
+    const children = batchRunIds.map((runId, index) =>
       makeSettledChild({
         runId,
+        ...(yielded ? { waitClaim: claim } : {}),
         ...(!mixed || index === 0
           ? { completionTarget: "parent" as const, completionRequesterSessionId: "sess-main" }
           : {}),
@@ -52,9 +63,7 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
         requesterSettleWake: {
           status: "pending",
           attemptCount: 0,
-          ...(yielded
-            ? { afterRequesterYield: true, requesterYieldBatch: true, rearmGeneration: 1 }
-            : {}),
+          ...(yielded ? { requesterYieldBatch: true, rearmGeneration: 1 } : {}),
         },
       }),
     );
@@ -503,7 +512,12 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
     ): SubagentRunRecord {
       return makeSettledChild({
         runId,
-        waitClaim: { requesterSessionKey: REQUESTER, awaitedRunIds, claimedAt: 5_000, requireVisibleReply: true },
+        waitClaim: {
+          requesterSessionKey: REQUESTER,
+          awaitedRunIds,
+          claimedAt: 5_000,
+          requireVisibleReply: true,
+        },
         ...overrides,
       });
     }
@@ -697,16 +711,7 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
     expect(deliverSpy).not.toHaveBeenCalled();
   });
 
-  it.each([
-    {
-      name: "wakes after a yielded requester's active child completes",
-      afterRequesterYield: undefined,
-    },
-    {
-      name: "wakes after a requester yields with one already-delivered completion",
-      afterRequesterYield: true,
-    },
-  ])("$name", async ({ afterRequesterYield }) => {
+  it("wakes after a yielded requester's active child completes", async () => {
     const child = makeSettledChild({
       runId: "run-b",
       delivery: { status: "delivered" },
@@ -722,7 +727,6 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
         batchRunIds: ["run-b"],
         requesterYieldBatch: true,
         rearmGeneration: 1,
-        ...(afterRequesterYield ? { afterRequesterYield } : {}),
       },
     });
     registryRuntimeMock.listSubagentRunsForRequester.mockReturnValue([child]);

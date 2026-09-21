@@ -1803,12 +1803,20 @@ describe("tui-event-handlers: handleAgentEvent", () => {
       handleSessionsChangedEvent({ reason: "reset", sessionId: "session-1", updatedAt: 20 });
       handleSessionsChangedEvent({ reason: "reset", sessionId: "session-1", updatedAt: 30 });
       expect(loadHistory).toHaveBeenCalledTimes(1);
-      first.resolve({ loaded: true, runOutcome: { state: "completed" } });
+      first.resolve({
+        loaded: true,
+        displayedAssistantRunIds: [],
+        runOutcome: { state: "completed" },
+      });
       await vi.waitFor(() => expect(loadHistory).toHaveBeenCalledTimes(2));
       expect(chatLog.addSystem).not.toHaveBeenCalled();
 
       state.activeChatRunId = "newly-adopted-run";
-      second.resolve({ loaded: true, runOutcome: { state: "active", runId: "newly-adopted-run" } });
+      second.resolve({
+        loaded: true,
+        displayedAssistantRunIds: [],
+        runOutcome: { state: "active", runId: "newly-adopted-run" },
+      });
       await vi.waitFor(() =>
         expect(chatLog.addSystem).toHaveBeenCalledExactlyOnceWith("session agent:main:main reset"),
       );
@@ -1840,7 +1848,11 @@ describe("tui-event-handlers: handleAgentEvent", () => {
       } else {
         dispose();
       }
-      history.resolve({ loaded: true, runOutcome: { state: "completed" } });
+      history.resolve({
+        loaded: true,
+        displayedAssistantRunIds: [],
+        runOutcome: { state: "completed" },
+      });
       await new Promise<void>((resolve) => {
         setImmediate(resolve);
       });

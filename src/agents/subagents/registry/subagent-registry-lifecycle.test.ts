@@ -6871,7 +6871,6 @@ describe("requester settle wake trigger", () => {
         ).toBe(true);
         expect(entry.requesterSettleWake).toMatchObject({
           requesterYieldBatch: true,
-          afterRequesterYield: true,
           rearmGeneration: 1,
         });
       }

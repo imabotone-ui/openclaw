@@ -1639,17 +1639,17 @@ describe("subagent registry seam flow", () => {
     }) as never);
     mocks.maybeWakeRequesterAfterAllChildrenSettled.mockImplementation(
       async (params: {
-        settledEntry: { runId: string };
+        settledEntry: SubagentRunRecord;
         completeBatch(
-          runIds: readonly string[],
+          batch: readonly SubagentRunRecord[],
           rearmGeneration?: number,
           outcome?: unknown,
           clearWaitClaims?: boolean,
         ): void;
       }) => {
         params.completeBatch(
-          [params.settledEntry.runId],
-          undefined,
+          [params.settledEntry],
+          params.settledEntry.requesterSettleWake?.rearmGeneration,
           { delivered: true, path: "direct" },
           true,
         );
@@ -1657,7 +1657,8 @@ describe("subagent registry seam flow", () => {
       },
     );
 
-    mod.initSubagentRegistry();
+    // The restored past-due wake only dispatches once the registry is active.
+    hydrateAndActivateRegistry();
 
     await waitForFast(() => {
       expect(rowA.requesterSettleWake).toBeUndefined();

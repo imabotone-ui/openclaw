@@ -7,6 +7,7 @@ import {
   wakeParams,
 } from "./subagent-announce.requester-settle-fixture.test-support.js";
 import {
+  REQUESTER,
   deliverSpy,
   makeSettledChild,
   completeBatchSpy,
@@ -25,6 +26,12 @@ describe("maybeWakeRequesterAfterAllChildrenSettled results", () => {
       completion: {
         required: true,
         terminalReply: buildAgentRunTerminalReplySnapshot({ visibleText: text }),
+      },
+      waitClaim: {
+        requesterSessionKey: REQUESTER,
+        awaitedRunIds: ["run-b"],
+        claimedAt: 5_000,
+        requireVisibleReply: true,
       },
       requesterSettleWake: {
         status: "pending",
@@ -74,9 +81,11 @@ describe("maybeWakeRequesterAfterAllChildrenSettled results", () => {
     expect(message).not.toContain("unrelated source reply");
     expect(call.steerMessage).toBe(message);
     expect(call.requireVisibleReply).toBe(true);
-    expect(completeBatchSpy).toHaveBeenCalledExactlyOnceWith(["run-b"], 1, {
-      delivered: true,
-      path: "direct",
-    });
+    expect(completeBatchSpy).toHaveBeenCalledExactlyOnceWith(
+      ["run-b"],
+      1,
+      { delivered: true, path: "direct" },
+      true,
+    );
   });
 });

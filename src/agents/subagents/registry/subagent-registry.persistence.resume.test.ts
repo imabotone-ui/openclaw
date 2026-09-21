@@ -359,7 +359,6 @@ describe("subagent registry persistence resume", () => {
           ...(restarting ? { replayCount: 1, nextAttemptAt: endedAt + 30_000 } : {}),
           batchRunIds: ["run-rejected-requester-wake"],
           requesterYieldBatch: true,
-          afterRequesterYield: true,
           rearmGeneration: 1,
         });
         const wakeRequester = vi.fn<WakeRequester>(async (params) => {
@@ -489,7 +488,6 @@ describe("subagent registry persistence resume", () => {
                   attemptCount: 2,
                   batchRunIds: [runId],
                   requesterYieldBatch: true,
-                  afterRequesterYield: true,
                   rearmGeneration: 1,
                 }),
                 requesterSessionKey: `agent:main:requester-${index}`,

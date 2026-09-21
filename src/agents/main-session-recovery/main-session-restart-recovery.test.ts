@@ -3504,6 +3504,101 @@ describe("main-session-restart-recovery", () => {
     expect(store["agent:main:already-marked"]?.abortedLastRun).toBe(false);
   });
 
+  it("marks and recovers a startup-orphaned session that has non-owner participants", async () => {
+    // Regression: the status-filtered snapshot read skipped the participant projection the
+    // in-transaction revalidation read applies, so every multi-participant session (any
+    // multi-party room) failed whole-entry equality and stayed stuck at status "running".
+    const sessionsDir = await makeSessionsDir();
+    const storePath = path.join(sessionsDir, "sessions.json");
+    const cutoff = Date.now();
+    const sessionKey = "agent:main:main";
+    await writeStore(sessionsDir, {
+      [sessionKey]: {
+        sessionId: "main-session",
+        updatedAt: cutoff - 10_000,
+        status: "running",
+        createdActor: { type: "human", id: "profile-owner", source: "profile" },
+      },
+    });
+    expect(
+      recordSessionParticipant(
+        { sessionKey, storePath },
+        {
+          identity: { type: "profile", id: "profile-other" },
+          promptedAt: cutoff - 9_000,
+        },
+      ),
+    ).toBe("inserted");
+    await writeTranscript(sessionsDir, "main-session", [
+      { role: "user", content: "run the tool" },
+      { role: "toolResult", content: "done" },
+    ]);
+
+    await expect(
+      markStartupOrphanedMainSessionsForRecovery({ stateDir: tmpDir, updatedBeforeMs: cutoff }),
+    ).resolves.toEqual({ marked: 1, skipped: 0 });
+    expect(readStore(storePath)[sessionKey]?.abortedLastRun).toBe(true);
+
+    await expect(recoverRestartAbortedMainSessions({ stateDir: tmpDir })).resolves.toEqual({
+      started: 1,
+      settled: 0,
+      failed: 0,
+      skipped: 0,
+    });
+    expect(readStore(storePath)[sessionKey]?.abortedLastRun).toBe(false);
+  });
+
+  it("keeps marking and recovering other stores when one store's marking write fails", async () => {
+    // Regression: a single failing marking write aborted the whole startup scan, so every
+    // other store's orphaned sessions were never marked and never recovered.
+    const brokenDir = await makeSessionsDir("broken");
+    const healthyDir = await makeSessionsDir("healthy");
+    const brokenStorePath = path.join(brokenDir, "sessions.json");
+    const healthyStorePath = path.join(healthyDir, "sessions.json");
+    const cutoff = Date.now();
+    for (const [sessionsDir, sessionKey, sessionId] of [
+      [brokenDir, "agent:broken:main", "broken-session"],
+      [healthyDir, "agent:healthy:main", "healthy-session"],
+    ] as const) {
+      await writeStore(sessionsDir, {
+        [sessionKey]: { sessionId, updatedAt: cutoff - 10_000, status: "running" },
+      });
+      await writeTranscript(sessionsDir, sessionId, [
+        { role: "user", content: "run the tool" },
+        { role: "toolResult", content: "done" },
+      ]);
+    }
+
+    const originalApply = sessionAccessor.applySessionEntryReplacements;
+    vi.spyOn(sessionAccessor, "applySessionEntryReplacements").mockImplementation(
+      async (params) => {
+        if (params.storePath === brokenStorePath && params.requireWriteSuccess === true) {
+          throw new Error("injected marking write failure");
+        }
+        return await originalApply(params);
+      },
+    );
+
+    // The broken store is reported as a failed target instead of aborting the scan.
+    await expect(
+      markStartupOrphanedMainSessionsForRecovery({ stateDir: tmpDir, updatedBeforeMs: cutoff }),
+    ).resolves.toEqual({
+      marked: 1,
+      skipped: 0,
+      failedTargets: [{ agentId: "broken", storePath: brokenStorePath }],
+    });
+    expect(readStore(healthyStorePath)["agent:healthy:main"]?.abortedLastRun).toBe(true);
+    expect(readStore(brokenStorePath)["agent:broken:main"]?.abortedLastRun).toBeUndefined();
+
+    await expect(recoverRestartAbortedMainSessions({ stateDir: tmpDir })).resolves.toEqual({
+      started: 1,
+      settled: 0,
+      failed: 0,
+      skipped: 0,
+    });
+    expect(readStore(healthyStorePath)["agent:healthy:main"]?.abortedLastRun).toBe(false);
+  });
+
   it("does not create empty agent databases while scanning startup recovery", async () => {
     const agentIds = Array.from({ length: 12 }, (_, index) => `agent-${index + 1}`);
     const databasePaths = await Promise.all(

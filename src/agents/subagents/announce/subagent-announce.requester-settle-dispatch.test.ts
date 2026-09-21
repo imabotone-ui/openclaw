@@ -110,6 +110,14 @@ function settledChild(): SubagentRunRecord {
     expectsCompletionMessage: true,
     completion: { required: true, resultText: "child result", capturedAt: 3_000 },
     delivery: { status: "delivered" },
+    // Every yield writes a turn-scoped claim over its awaited children, so a
+    // yielded batch fixture carries one; the wake gate resolves it.
+    waitClaim: {
+      requesterSessionKey: REQUESTER_KEY,
+      awaitedRunIds: ["settled-child"],
+      claimedAt: 2_500,
+      requireVisibleReply: true,
+    },
     requesterSettleWake: {
       status: "pending",
       attemptCount: 0,
@@ -160,13 +168,9 @@ describe("requester settle dispatch deadline", () => {
     vi.useRealTimers();
   });
 
-  it.each([
-    { afterRequesterYield: false, runTimeoutSeconds: 0 },
-    { afterRequesterYield: true, runTimeoutSeconds: 600 },
-    { afterRequesterYield: true, runTimeoutSeconds: undefined },
-  ])(
-    "wakes a nested yielded requester once with its $runTimeoutSeconds-second budget (child completed before yield=$afterRequesterYield)",
-    async ({ afterRequesterYield, runTimeoutSeconds }) => {
+  it.each([{ runTimeoutSeconds: 0 }, { runTimeoutSeconds: 600 }, { runTimeoutSeconds: undefined }])(
+    "wakes a nested yielded requester once with its $runTimeoutSeconds-second budget",
+    async ({ runTimeoutSeconds }) => {
       const requesterSessionKey = "agent:main:subagent:middle";
       registryRead.getLatestLiveSubagentRunByChildSessionKey.mockReturnValue({
         ...settledChild(),
@@ -177,12 +181,19 @@ describe("requester settle dispatch deadline", () => {
       });
       const child = settledChild();
       child.requesterSessionKey = requesterSessionKey;
+      // A nested requester pins requireVisibleReply false at claim-write time:
+      // its final answer is its own completion message to its parent.
+      child.waitClaim = {
+        requesterSessionKey,
+        awaitedRunIds: [child.runId],
+        claimedAt: 5_000,
+        requireVisibleReply: false,
+      };
       child.requesterSettleWake = {
         status: "pending",
         attemptCount: 0,
         batchRunIds: [child.runId],
         requesterYieldBatch: true,
-        afterRequesterYield: afterRequesterYield ? true : undefined,
         rearmGeneration: 1,
       };
       registryRead.listSubagentRunsForRequester.mockReturnValue([child]);
@@ -212,13 +223,18 @@ describe("requester settle dispatch deadline", () => {
           targetRequesterSessionKey: requesterSessionKey,
           requesterIsSubagent: true,
           requesterRunTimeoutSeconds: runTimeoutSeconds ?? 0,
-          requireVisibleReply: true,
           sourceTool: "subagent_settle",
           triggerMessage: expect.stringContaining("child result"),
           directIdempotencyKey: `announce:requester-settle:main:${requesterSessionKey}:${child.runId}:yield-1`,
         }),
       );
-      expect(completeBatch).toHaveBeenCalledWith([child], 1, { delivered: true, path: "direct" });
+      expect(deliver.mock.calls[0]?.[0]).not.toHaveProperty("requireVisibleReply");
+      expect(completeBatch).toHaveBeenCalledWith(
+        [child],
+        1,
+        { delivered: true, path: "direct" },
+        true,
+      );
       await expect(maybeWakeRequesterAfterAllChildrenSettled(params)).resolves.toBe(false);
       expect(deliver).toHaveBeenCalledOnce();
       expect(completeBatch).toHaveBeenCalledOnce();
@@ -554,6 +570,7 @@ describe("requester settle dispatch deadline", () => {
           path: "direct",
           requesterVisibleFinalDelivered: true,
         }),
+        true,
       );
       await expect(maybeWakeRequesterAfterAllChildrenSettled(wakeParams)).resolves.toBe(false);
       expect(startTurn).toHaveBeenCalledOnce();
@@ -683,6 +700,7 @@ describe("requester settle dispatch deadline", () => {
             [child],
             1,
             expect.objectContaining({ delivered: true, requesterVisibleFinalDelivered: true }),
+            true,
           );
         } else {
           expect(acceptedSignal?.aborted).toBe(true);

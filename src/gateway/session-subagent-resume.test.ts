@@ -86,7 +86,6 @@ it.each(["agent:main:subagent:resume-child", "agent:main:dashboard:resume-child"
       status: "pending",
       attemptCount: 0,
       requesterYieldBatch: true,
-      afterRequesterYield: true,
       rearmGeneration: 1,
       batchRunIds: [previousRunId],
     };
